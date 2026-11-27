@@ -136,6 +136,7 @@ def run(mode: str) -> int:
                 if not link or link in seen:
                     continue
                 seen.add(link)
+                source_stats[name]["new"] += 1
                 key = hashlib.sha256(link.encode()).hexdigest()[:24]
                 new_rows.append([key, notice["buyer"], name, notice["title"], notice["published"],
                     notice["deadline"], link, notice["subject"], "Потрібна оцінка", "NEW",
