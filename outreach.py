@@ -7,6 +7,7 @@ from datetime import datetime
 from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 from zoneinfo import ZoneInfo
 from urllib.robotparser import RobotFileParser
+from public_sources import prozorro_notices, ted_notices
 
 ZONE = ZoneInfo("Europe/Istanbul")
 SOURCES = {
@@ -121,6 +122,19 @@ def run(mode: str) -> int:
                     "Організатора, предмет і дедлайн перевірити; не є підставою для розсилки"])
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}")
+    for name, action in [("Prozorro", prozorro_notices), ("TED", lambda: ted_notices(now.date()))]:
+        try:
+            for notice in action():
+                link = canonical_url(notice["url"])
+                if not link or link in seen:
+                    continue
+                seen.add(link)
+                key = hashlib.sha256(link.encode()).hexdigest()[:24]
+                new_rows.append([key, notice["buyer"], name, notice["title"], notice["published"],
+                    notice["deadline"], link, notice["subject"], "Потрібна оцінка", "NEW",
+                    "Офіційний API; перевірити умови та актуальність закупівлі"])
+        except Exception as e:
+            errors.append(f"{name}: {type(e).__name__}")
     existing = {canonical_url(r[6]) for r in read_values(sheets, sid, "'Закупівлі'!A2:K") if len(r)>6}
     rows = [r for r in new_rows if canonical_url(r[6]) not in existing]
     if rows:
@@ -129,7 +143,7 @@ def run(mode: str) -> int:
         if not all(r[0] in ids for r in rows):
             raise RuntimeError("CRM write readback failed")
     end = datetime.now(ZONE).isoformat(timespec="seconds")
-    status = "PARTIAL" if errors and len(errors) < len(SOURCES) else "ERROR" if errors else "OK"
+    status = "PARTIAL" if errors and len(errors) < len(SOURCES) + 2 else "ERROR" if errors else "OK"
     run_url = f"{os.getenv('GITHUB_SERVER_URL','https://github.com')}/{os.getenv('GITHUB_REPOSITORY','')}/actions/runs/{os.getenv('GITHUB_RUN_ID','')}" if os.getenv("GITHUB_RUN_ID") else ""
     append_values(sheets, sid, "'Системний журнал'!A:J",
         [[cycle, cycle, start, end, "DISCOVERY", status, len(rows), 0, "; ".join(errors), run_url]])
