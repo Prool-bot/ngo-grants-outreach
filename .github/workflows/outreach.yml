@@ -85,7 +85,7 @@ jobs:
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
         run: python google_preflight.py --mode imap-check
       - name: Owner report
-        if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'report-preview' || inputs.mode == 'report')))
+        if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'report-preview' || inputs.mode == 'report')))
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
