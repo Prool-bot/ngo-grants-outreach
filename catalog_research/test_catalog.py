@@ -28,3 +28,24 @@ class AccumulationTests(unittest.TestCase):
         self.assertEqual(result["references"][0]["category_codes"],["EDU-01","EDU-07"])
         self.assertEqual(len(result["coverage"]),115)
         self.assertEqual(len(accumulate(result,{}, "2026-11-28")["references"]),3)
+
+class RegistryReferenceTests(unittest.TestCase):
+    def test_ror_and_crossref(self):
+        from catalog_research.registry_references import parse_ror,parse_crossref
+        from catalog_research.accumulate import accumulate
+        item={"id":"https://ror.org/012345678","status":"active","types":["education"],
+              "locations":[{"geonames_details":{"country_code":"UA"}}],
+              "names":[{"value":"Example University","types":["ror_display"]}],
+              "external_ids":[{"type":"wikidata","all":["Q123"]}]}
+        r=parse_ror(item,"EDU-01","education","University")
+        self.assertEqual(r["source_id"],"Q123")
+        self.assertEqual(r["sources"],["ROR"])
+        item["status"]="inactive"
+        self.assertIsNone(parse_ror(item,"EDU-01","education","University"))
+        f=parse_crossref({"id":"100000001","name":"Example Research Foundation","location":"Ukraine"})
+        self.assertEqual(f["source_id"],"CROSSREF:10.13039/100000001")
+        self.assertIsNone(parse_crossref({"id":"100000001","name":"Foundation","location":"France"}))
+        result=accumulate({"references":[{"source_id":"Q123","title":"Example","category_codes":["EDU-01"]}]},{"references":[r,f]},"2026-11-27")
+        self.assertEqual(len(result["references"]),2)
+        q=next(x for x in result["references"] if x["source_id"]=="Q123")
+        self.assertEqual(q["sources"],["ROR","Wikimedia"])
