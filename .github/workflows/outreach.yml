@@ -10,6 +10,7 @@ on:
       - 'daily_report.py'
       - 'queue_audit.py'
       - 'procurement_quality.py'
+      - 'registry_audit.py'
       - 'google_preflight.py'
       - 'requirements.txt'
       - 'tests/**'
@@ -19,7 +20,7 @@ on:
       mode:
         description: 'check = Google API; monitor = procurement; preview = read-only full search; pilot = one-time registry test; report = owner-only daily report; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
         type: choice
-        options: [check, monitor, preview, pilot, report-preview, report, queue-audit, smtp-check, smtp-self-test, sources-check, imap-check]
+        options: [check, monitor, preview, pilot, report-preview, report, queue-audit, registry-audit, smtp-check, smtp-self-test, sources-check, imap-check]
         default: check
 permissions:
   contents: read
@@ -103,3 +104,11 @@ jobs:
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
         run: python queue_audit.py
+      - name: Refresh unreviewed procurement statuses
+        if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'monitor' || inputs.mode == 'registry-audit')))
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
+          CRM_ID: ${{ secrets.CRM_ID }}
+          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
+        run: python registry_audit.py --apply
