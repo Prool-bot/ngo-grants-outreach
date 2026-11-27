@@ -4,15 +4,16 @@ on:
     branches: [main]
     paths:
       - 'outreach.py'
+      - 'smtp_preflight.py'
       - 'requirements.txt'
       - 'tests/**'
       - '.github/workflows/outreach.yml'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check = connection test; monitor = procurement discovery'
+        description: 'check = Google API; monitor = procurement; smtp-check = SMTP auth; smtp-self-test = own mailbox only'
         type: choice
-        options: [check, monitor]
+        options: [check, monitor, smtp-check, smtp-self-test]
         default: check
 permissions:
   contents: read
@@ -31,10 +32,18 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests
       - name: Run explicitly requested mode
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor')
         env:
           GOOGLE_AUTHORIZED_USER_JSON: ${{ secrets.GOOGLE_AUTHORIZED_USER_JSON }}
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
           MODE: ${{ inputs.mode }}
         run: python outreach.py --mode "$MODE"
+      - name: Check SMTP configuration
+        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test')
+        env:
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
+          SEND_SELF_TEST: ${{ inputs.mode == 'smtp-self-test' }}
+        run: python smtp_preflight.py
