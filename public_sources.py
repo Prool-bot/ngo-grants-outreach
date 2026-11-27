@@ -6,7 +6,7 @@ import requests
 PROZORRO = "https://public-api.prozorro.gov.ua/api/2.5/tenders"
 TED = "https://api.ted.europa.eu/v3/notices/search"
 HEADERS = {"User-Agent": "NGOGrantsResearch/0.2 (+https://github.com/Prool-bot/ngo-grants-outreach)"}
-CPV_PREFIXES = ("7934", "7931", "7941", "7241", "7232", "8042")
+CPV_PREFIXES = ("79341", "79342", "79416", "79340000")
 ACTIVE = {"active.tendering", "active.enquiries"}
 
 def parse_prozorro_detail(record):
@@ -62,18 +62,18 @@ def parse_ted_notice(item):
         return None
     return {"title": title, "url": f"https://ted.europa.eu/en/notice/-/detail/{number}",
         "buyer": field_text(item.get("buyer-name")),
-        "published": field_text(item.get("publication-date")), "deadline": "",
+        "published": field_text(item.get("publication-date")), "deadline": field_text(item.get("deadline-receipt-request")),
         "subject": field_text(item.get("classification-cpv"))}
 
 def ted_notices(day):
     since = (day - timedelta(days=7)).strftime("%Y%m%d")
-    codes = " OR ".join("classification-cpv=" + c for c in ("79340000", "79341000", "79342000", "79311000", "79416000", "72413000"))
-    body = {"query": f"publication-date>={since} AND ({codes})",
-        "fields": ["publication-number", "notice-title", "buyer-name", "publication-date", "classification-cpv"],
+    codes = " OR ".join("classification-cpv=" + c for c in ("79341000", "79342000", "79416000"))
+    body = {"query": f"publication-date>={since} AND form-type=competition AND deadline-receipt-request>={day.strftime('%Y%m%d')} AND ({codes})",
+        "fields": ["publication-number", "notice-title", "buyer-name", "publication-date", "classification-cpv", "deadline-receipt-request"],
         "page": 1, "limit": 50, "scope": "ACTIVE", "paginationMode": "PAGE_NUMBER"}
     response = requests.post(TED, headers=HEADERS, json=body, timeout=30)
     response.raise_for_status()
-    return [x for n in response.json()["notices"] if (x := parse_ted_notice(n))]
+    return [x for n in response.json()["notices"] if (x := parse_ted_notice(n)) and x["deadline"]]
 
 if __name__ == "__main__":
     failures = 0
