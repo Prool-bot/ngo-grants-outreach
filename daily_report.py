@@ -48,6 +48,13 @@ def run(send=False, self_test=False):
     history=read_values(sheets,sid,"'Історія розсилок'!A2:J")
     excluded=len({str(r[0]).strip().casefold() for r in invalid if r and r[0]})
     today_history=sum(1 for r in history if len(r)>6 and str(r[6]).startswith(day))
+    mailbox_outcome=os.environ.get("MAILBOX_SYNC_OUTCOME","skipped")
+    if mailbox_outcome=="success":
+        mailbox_note="Перевірку структурованих повідомлень про недоставлення виконано."
+    elif mailbox_outcome=="failure":
+        mailbox_note="Помилка перевірки пошти; показники відображають наявний реєстр."
+    else:
+        mailbox_note="У цьому запуску пошту не перевірено; показники відображають наявний реєстр."
     body=(f"NGO Grants Outreach — {day}\n"
           f"Циклів: {n}; успішних: {statuses['OK']}; часткових: {statuses['PARTIAL']}; помилок: {statuses['ERROR']}\n"
           f"Планових циклів: {planned}; відмічено у журналі: {executed}; успішних: {successful}; без запису: {missing}\n"
@@ -59,7 +66,7 @@ def run(send=False, self_test=False):
           f"Операцій у журналі розсилок за день: {today_history}\n"
           f"Повернень у реєстрі (накопичено): {len(returns)}\n"
           f"Підтверджених недійсних адрес у реєстрі: {excluded}\n"
-          "Автоматичне читання нових повернень із Gmail не підключено; показники відображають лише наявний реєстр.\n"
+          f"{mailbox_note}\n"
           "Якість закупівель (автоматична попередня оцінка): "+", ".join(f"{k}: {v}" for k,v in sorted(quality.items()))+"\n"
           "Зовнішня розсилка не активована. Результати потребують перевірки.\n")
     if not send and not self_test:
@@ -67,7 +74,7 @@ def run(send=False, self_test=False):
         print("PROCUREMENT_QUALITY",dict(quality))
         print("CATEGORY_COVERAGE",len(categories),"QUEUE_ROWS",len(queue))
         print("SCHEDULE_COVERAGE",planned,executed,missing,successful)
-        print("DELIVERY_REPORT",len(returns),excluded,"HISTORY_TODAY",today_history,"GMAIL_SYNC_NOT_ACTIVE")
+        print("DELIVERY_REPORT",len(returns),excluded,"HISTORY_TODAY",today_history,"MAILBOX_OUTCOME",mailbox_outcome)
         return
     if not self_test and (now.weekday()>=5 or now.hour!=17 or now.minute<30):
         print("REPORT_SKIPPED_OUTSIDE_WINDOW")
