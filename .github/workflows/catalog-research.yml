@@ -44,7 +44,12 @@ jobs:
         run: |
           offset=$(( (($(date -u +%s) / 86400 + 1) % 5) * 10 ))
           echo "CATALOG_OFFSET $offset"
+          echo "CATALOG_OFFSET=$offset" >> "$GITHUB_ENV"
           python -m catalog_research.run --output catalog-output --offset "$offset"
+      - name: Supplement public research references from independent scholarly registries
+        id: registries
+        continue-on-error: true
+        run: python -m catalog_research.registry_references --output catalog-output --offset "$CATALOG_OFFSET"
       - name: Accumulate and verify reference snapshot
         run: |
           set -euo pipefail
@@ -61,7 +66,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Flag partial search
-        if: steps.search.outcome == 'failure'
+        if: steps.search.outcome == 'failure' || steps.registries.outcome == 'failure'
         run: |
           echo "::error::Search partially failed; cumulative snapshot retained"
           exit 1
