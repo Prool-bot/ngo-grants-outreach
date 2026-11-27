@@ -45,7 +45,7 @@ def safe_url(u):
     except (ValueError,OSError):
         return False
 
-def fetch(session,url,base,robots=True):
+def fetch(session,url,base,robots=True,redirects=1):
     if not safe_url(url) or host(url)!=host(base):
         return None
     if robots:
@@ -69,8 +69,8 @@ def fetch(session,url,base,robots=True):
             # Follow only same-host HTTP-to-HTTPS or www redirects; never leave official domain.
             if host(target)!=host(base) or target==url or not safe_url(target):
                 return None
-            if robots:
-                return fetch(session,target,base,False)
+            if redirects:
+                return fetch(session,target,base,robots,redirects-1)
             return None
         if response.status_code not in (200,404):
             response.close()
@@ -147,6 +147,11 @@ def extract(soup,known=""):
         add(emails,generic_email(a["href"],known))
     for a in soup.select("header a[href^='tel:'], footer a[href^='tel:'], [role='banner'] a[href^='tel:'], [role='contentinfo'] a[href^='tel:']"):
         add(phones,phone(unquote(a["href"][4:])))
+    # A number explicitly labelled as a general office or call-centre channel.
+    for a in soup.select("a[href^='tel:']"):
+        context=a.parent.get_text(" ",strip=True) if a.parent else ""
+        if len(context)<160 and re.search(r"кол[- ]?центр|гаряч[аої] ліні|приймальн|телефон офіс|відділ продаж|call.cent[er]+|reception|office phone|general enquiries",context,re.I):
+            add(phones,phone(unquote(a["href"][4:])))
     # Existing role mailbox can also be visible plain text, not just a mailto link.
     for v in EMAIL.findall(soup.get_text(" ",strip=True)):
         add(emails,generic_email(v,known))
@@ -220,7 +225,8 @@ def main():
     crm=read(api,SID,"Контрагенти","A1:E1000")
     if crm[0][:5]!=["ID","Організація","Сектор","Email","Раніше зазначене джерело"]:
         raise ValueError("Unexpected historical source headers")
-    candidates=read(api,SID,"Кандидати","A1:F5000")
+    candidate_props=next(s["properties"] for s in meta["sheets"] if s["properties"]["title"]=="Кандидати")
+    candidates=read(api,SID,"Кандидати","A1:F"+str(candidate_props["gridProperties"]["rowCount"]))
     if candidates[0][:6]!=["ID","Організація","ЄДРПОУ","Категорія","Сайт","Джерело"]:
         raise ValueError("Unexpected candidate headers")
     sources={email_key(r[3]):r[4] for row in crm[1:] if (r:=pad(row,5))[3] and r[4]}
