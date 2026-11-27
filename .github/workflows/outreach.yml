@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check = Google API; monitor = procurement; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
+        description: 'check = Google API; monitor = procurement; preview = read-only full search; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
         type: choice
-        options: [check, monitor, smtp-check, smtp-self-test, sources-check, imap-check]
+        options: [check, monitor, preview, smtp-check, smtp-self-test, sources-check, imap-check]
         default: check
 permissions:
   contents: read
@@ -34,7 +34,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests
       - name: Run explicitly requested mode
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor'))
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor' || inputs.mode == 'preview'))
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
@@ -47,6 +47,9 @@ jobs:
             echo "::error::Missing GOOGLE_SERVICE_ACCOUNT_JSON"; exit 1
           fi
           python outreach.py --mode "$MODE"
+          if [ "$MODE" = "check" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            python outreach.py --mode preview
+          fi
       - name: Check SMTP configuration
         if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test')))
         env:
