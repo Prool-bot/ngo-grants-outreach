@@ -9,18 +9,24 @@ import ssl
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.errors import HttpError
 from smtp_preflight import validate_sender
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive.readonly"]
 
 def file_services():
-    creds = Credentials.from_service_account_info(
-        json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]), scopes=SCOPES)
+    info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    expected_service = os.environ.get("EXPECTED_SERVICE_ACCOUNT", "").strip().lower()
+    if expected_service and info.get("client_email", "").lower() != expected_service:
+        raise ValueError("Service account identity mismatch")
+    creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+    print("SERVICE_ACCOUNT_CONFIG_OK", flush=True)
     return (build("sheets", "v4", credentials=creds, cache_discovery=False),
             build("drive", "v3", credentials=creds, cache_discovery=False))
 
 def verify_crm(sheets, sid, expected):
+    print("STAGE CRM_READ", flush=True)
     values = sheets.spreadsheets().values().get(spreadsheetId=sid,
         range="'Налаштування'!A2:B30").execute().get("values", [])
     settings = {r[0]: r[1] for r in values if len(r) >= 2}
@@ -28,13 +34,16 @@ def verify_crm(sheets, sid, expected):
         raise ValueError("CRM identity mismatch")
     if not settings.get("Прайс Drive ID"):
         raise ValueError("Price ID missing in CRM")
+    print("CRM_READ_OK", flush=True)
     return settings
 
 def load_price(drive, file_id):
+    print("STAGE PDF_METADATA", flush=True)
     metadata = drive.files().get(fileId=file_id, fields="name,mimeType,size,trashed").execute()
     if (metadata.get("trashed") or metadata.get("mimeType") != "application/pdf"
         or int(metadata.get("size", "0")) != 556589):
         raise ValueError("Price metadata mismatch; review price configuration")
+    print("STAGE PDF_DOWNLOAD", flush=True)
     stream = io.BytesIO()
     downloader = MediaIoBaseDownload(stream, drive.files().get_media(fileId=file_id))
     done = False
@@ -43,6 +52,7 @@ def load_price(drive, file_id):
     content = stream.getvalue()
     if len(content) != 556589 or not content.startswith(b"%PDF-"):
         raise ValueError("Price content mismatch")
+    print("PRICE_PDF_OK", flush=True)
     return content
 
 def imap_preflight():
@@ -53,6 +63,27 @@ def imap_preflight():
         if status != "OK":
             raise RuntimeError("IMAP read-only inbox unavailable")
     print("IMAP_READ_ONLY_OK")
+
+def safe_http_error(exc):
+    """Log only numeric status and recognized error categories, not raw messages or URLs."""
+    status = getattr(exc.resp, "status", None)
+    reasons = set()
+    try:
+        error = json.loads(exc.content).get("error", {})
+        for item in error.get("errors", []) + error.get("details", []):
+            reason = item.get("reason", "")
+            if reason in {"accessNotConfigured", "SERVICE_DISABLED", "PERMISSION_DENIED",
+                          "forbidden", "insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+                          "notFound", "NOT_FOUND", "badRequest", "invalid", "rateLimitExceeded",
+                          "userRateLimitExceeded", "RESOURCE_EXHAUSTED", "UNAUTHENTICATED",
+                          "unauthorized", "insufficientFilePermissions", "dailyLimitExceeded"}:
+                reasons.add(reason)
+        reason = error.get("status", "")
+        if reason in {"PERMISSION_DENIED", "NOT_FOUND", "UNAUTHENTICATED", "INVALID_ARGUMENT", "RESOURCE_EXHAUSTED"}:
+            reasons.add(reason)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return f"HTTP {status}; reason={','.join(sorted(reasons)) or 'UNCLASSIFIED'}"
 
 if __name__ == "__main__":
     import argparse
@@ -69,5 +100,5 @@ if __name__ == "__main__":
             load_price(drive, settings["Прайс Drive ID"])
             print("PRICE_PDF_OK")
     except Exception as exc:
-        print("CHECK_ERROR", mode, type(exc).__name__)
+        print("CHECK_ERROR", mode, safe_http_error(exc) if isinstance(exc, HttpError) else type(exc).__name__)
         raise SystemExit(1)
