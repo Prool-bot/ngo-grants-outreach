@@ -12,3 +12,7 @@ class TestReport(unittest.TestCase):
         now=datetime(2026,11,30,17,30,tzinfo=ZoneInfo("Europe/Istanbul"))
         rows=[["2026-11-30T09:00+0300","","","","DISCOVERY","OK"],["2026-11-30T10:00+0300","","","","DISCOVERY","PARTIAL"],["PILOT-1","","","","PILOT","OK"]]
         self.assertEqual(cycle_coverage(rows,now),(9,2,7,1))
+
+    def test_before_activation(self):
+        now=datetime(2026,11,27,19,30,tzinfo=ZoneInfo("Europe/Istanbul"))
+        self.assertEqual(cycle_coverage([],now),(0,0,0,0))
