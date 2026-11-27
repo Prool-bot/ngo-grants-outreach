@@ -76,3 +76,16 @@ class CityEvidenceTests(unittest.TestCase):
         a=accumulate({},{"references":[r]},"2026-11-27")
         b=accumulate(a,{},"2026-11-28")
         self.assertEqual(b["references"][0]["cities"],["Kyiv"])
+
+class SheetsProfileTests(unittest.TestCase):
+    def test_profile_only(self):
+        from catalog_research.sheets_sync import profile_rows
+        snapshot={"references":[{"source_id":"Q123","title":"Example University","category_codes":["EDU-01"],"cities":["Kyiv"],"source_url":"https://www.wikidata.org/wiki/Q123","email":"not-exported","phone":"not-exported"}]}
+        result=profile_rows(snapshot)
+        self.assertEqual(len(result),1)
+        self.assertEqual(result[0][1][2],"Kyiv")
+        self.assertEqual(len(result[0][1]),3)
+        self.assertNotIn("not-exported",str(result))
+        snapshot["references"]*=2
+        with self.assertRaises(ValueError):
+            profile_rows(snapshot)
