@@ -34,13 +34,13 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests
       - name: Run explicitly requested mode
-        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor')
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor'))
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
-          MODE: ${{ inputs.mode }}
+          MODE: ${{ github.event_name == 'push' && 'check' || inputs.mode }}
         run: |
           if [ -z "$GOOGLE_SERVICE_ACCOUNT_JSON" ]; then
             echo "::error::Missing GOOGLE_SERVICE_ACCOUNT_JSON"; exit 1
@@ -67,7 +67,7 @@ jobs:
         if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'sources-check'))
         run: python public_sources.py
       - name: Check IMAP inbox without reading messages
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'imap-check')
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'imap-check'
         env:
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
