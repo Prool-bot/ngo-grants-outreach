@@ -40,10 +40,19 @@ jobs:
           MODE: ${{ inputs.mode }}
         run: python outreach.py --mode "$MODE"
       - name: Check SMTP configuration
-        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test')
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test'))
         env:
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
           SEND_SELF_TEST: ${{ inputs.mode == 'smtp-self-test' }}
-        run: python smtp_preflight.py
+        run: |
+          missing=0
+          for key in EMAIL_ADDRESS EMAIL_APP_PASSWORD EXPECTED_GMAIL; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing repository secret: $key"
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ]; then exit 1; fi
+          python smtp_preflight.py
