@@ -38,7 +38,7 @@ def parse_listing(html: str, base: str) -> list[tuple[str, str]]:
     base_host = urlsplit(base).hostname.lower().removeprefix("www.")
     for a in soup.find_all("a", href=True):
         title = " ".join(a.stripped_strings)
-        if len(title) < 12 or not KEYWORDS.search(title):
+        if len(title) < 12 or not KEYWORDS.search(title) or re.search(r"правила публікаці|як опублікувати|архів тендерів", title, re.I):
             continue
         target = canonical_url(urljoin(base, a["href"]))
         if not target or urlsplit(target).hostname != base_host or target == canonical_url(base):
@@ -123,7 +123,7 @@ def run(mode: str) -> int:
                 seen.add(link)
                 source_stats[name]["new"] += 1
                 key = hashlib.sha256(link.encode()).hexdigest()[:24]
-                new_rows.append([key, "", name, title, "", "", link, "", "Потрібна оцінка", "NEW",
+                new_rows.append([key, "", name, title, "", "", link, "", "Потрібна оцінка", "UNVERIFIED_DEADLINE",
                     "Організатора, предмет і дедлайн перевірити; не є підставою для розсилки"])
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}")
@@ -140,7 +140,7 @@ def run(mode: str) -> int:
                 source_stats[name]["new"] += 1
                 key = hashlib.sha256(link.encode()).hexdigest()[:24]
                 new_rows.append([key, notice["buyer"], name, notice["title"], notice["published"],
-                    notice["deadline"], link, notice["subject"], "Потрібна оцінка", "NEW",
+                    notice["deadline"], link, notice["subject"], "Потрібна оцінка", "VERIFY_ELIGIBILITY" if notice["deadline"] else "UNVERIFIED_DEADLINE",
                     "Офіційний API; перевірити умови та актуальність закупівлі"])
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}")
