@@ -37,6 +37,7 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor'))
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
@@ -47,7 +48,7 @@ jobs:
           fi
           python outreach.py --mode "$MODE"
       - name: Check SMTP configuration
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test'))
+        if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test')))
         env:
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
