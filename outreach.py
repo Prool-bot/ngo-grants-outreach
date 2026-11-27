@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 from zoneinfo import ZoneInfo
 from urllib.robotparser import RobotFileParser
 from public_sources import prozorro_notices, ted_notices
+from directory_sources import directory_entries
 
 ZONE = ZoneInfo("Europe/Istanbul")
 SOURCES = {
@@ -146,25 +147,54 @@ def run(mode: str) -> int:
             source_stats[name] = {"error": type(e).__name__}
     existing = {canonical_url(r[6]) for r in read_values(sheets, sid, "'Закупівлі'!A2:K") if len(r)>6}
     rows = [r for r in new_rows if canonical_url(r[6]) not in existing]
+    candidates = []
+    try:
+        orgs, directory_stats = directory_entries(now)
+        classifier = {r[0]: r[2] for r in read_values(sheets, sid, "'Класифікатор'!A2:E") if len(r)>=5 and r[4]=="Активна"}
+        old = read_values(sheets, sid, "'Кандидати'!A2:K")
+        known = {r[0] for r in old if r}
+        known_names = {r[1].strip().casefold() for r in old if len(r)>1}
+        for org in orgs:
+            key = org["id"]
+            name = org["name"]
+            if org["code"] not in classifier or key in known or name.strip().casefold() in known_names:
+                continue
+            known.add(key)
+            known_names.add(name.strip().casefold())
+            candidates.append([key, name, "", org["code"]+" — "+classifier[org["code"]],
+                org["website"], key, "ROR: "+org["types"], start, "Не встановлена",
+                "RESEARCH_ONLY", "Категорія попередня; профіль і сайт потребують перевірки; не для автоматичної розсилки"])
+        source_stats["ROR"] = {"found":len(orgs), "new":len(candidates), "categories":directory_stats}
+    except Exception as e:
+        errors.append("ROR: "+type(e).__name__)
+        source_stats["ROR"] = {"error":type(e).__name__}
     if mode == "preview":
-        print(json.dumps({"mode": "preview", "sources": source_stats, "new_announcements": len(rows), "sent": 0, "errors": errors}, ensure_ascii=False))
+        print(json.dumps({"mode": "preview", "sources": source_stats, "new_announcements": len(rows),
+                          "new_organizations":len(candidates), "sent": 0, "errors": errors}, ensure_ascii=False))
         return 1 if errors else 0
     if rows:
         append_values(sheets, sid, "'Закупівлі'!A:K", rows)
         ids = {r[0] for r in read_values(sheets, sid, "'Закупівлі'!A2:A") if r}
         if not all(r[0] in ids for r in rows):
             raise RuntimeError("CRM write readback failed")
+    if candidates:
+        existing_ids = {r[0] for r in read_values(sheets, sid, "'Кандидати'!A2:A") if r}
+        candidates = [r for r in candidates if r[0] not in existing_ids]
+        append_values(sheets, sid, "'Кандидати'!A:K", candidates)
+        verified = {r[0] for r in read_values(sheets, sid, "'Кандидати'!A2:A") if r}
+        if not all(r[0] in verified for r in candidates):
+            raise RuntimeError("Candidate register readback failed")
     end = datetime.now(ZONE).isoformat(timespec="seconds")
-    status = "PARTIAL" if errors and len(errors) < len(SOURCES) + 2 else "ERROR" if errors else "OK"
+    status = "PARTIAL" if errors and len(errors) < len(SOURCES) + 3 else "ERROR" if errors else "OK"
     run_url = f"{os.getenv('GITHUB_SERVER_URL','https://github.com')}/{os.getenv('GITHUB_REPOSITORY','')}/actions/runs/{os.getenv('GITHUB_RUN_ID','')}" if os.getenv("GITHUB_RUN_ID") else ""
     append_values(sheets, sid, "'Системний журнал'!A:J",
-        [[cycle, cycle, start, end, "DISCOVERY", status, len(rows), 0, "; ".join(errors), run_url]])
-    print(json.dumps({"status": status, "sources": source_stats, "new_announcements": len(rows), "sent": 0, "errors": errors}, ensure_ascii=False))
+        [[cycle if mode=="monitor" else "PILOT-"+os.getenv("GITHUB_RUN_ID",start), cycle, start, end, "DISCOVERY" if mode=="monitor" else "PILOT", status, len(rows)+len(candidates), 0, "; ".join(errors), run_url]])
+    print(json.dumps({"status": status, "sources": source_stats, "new_announcements": len(rows), "new_organizations":len(candidates), "sent": 0, "errors": errors}, ensure_ascii=False))
     return 1 if errors else 0
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["check", "monitor", "preview"], default="check")
+    parser.add_argument("--mode", choices=["check", "monitor", "preview", "pilot"], default="check")
     try:
         sys.exit(run(parser.parse_args().mode))
     except Exception as e:
