@@ -63,3 +63,16 @@ class SectorResourcesTests(unittest.TestCase):
     def test_text_field(self):
         from catalog_research.sector_resources import text_value
         self.assertEqual(text_value({"ENG":["Example"]}),"Example")
+
+class CityEvidenceTests(unittest.TestCase):
+    def test_preserve_source_city(self):
+        from catalog_research.registry_references import parse_ror
+        from catalog_research.accumulate import accumulate
+        item={"id":"https://ror.org/012345678","status":"active","types":["education"],
+              "locations":[{"geonames_details":{"country_code":"UA","name":"Kyiv"}}],
+              "names":[{"value":"Example University","types":["ror_display"]}]}
+        r=parse_ror(item,"EDU-01","education","University")
+        self.assertEqual(r["cities"],["Kyiv"])
+        a=accumulate({},{"references":[r]},"2026-11-27")
+        b=accumulate(a,{},"2026-11-28")
+        self.assertEqual(b["references"][0]["cities"],["Kyiv"])

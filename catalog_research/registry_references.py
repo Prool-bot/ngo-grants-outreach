@@ -44,6 +44,7 @@ def parse_ror(item,code,kind,pattern):
     row=reference(qids[0] if len(set(qids))==1 else "ROR:"+rid,title,code)
     if row:
         row["sources"]=["ROR"]
+        row["cities"]=sorted({str(x["geonames_details"]["name"]).strip() for x in item.get("locations",[]) if x.get("geonames_details",{}).get("country_code")=="UA" and x["geonames_details"].get("name")})
     return row
 
 def parse_crossref(item):
@@ -107,6 +108,7 @@ def main():
         item=combined.setdefault(row["source_id"],row.copy())
         item["category_codes"]=sorted(set(item["category_codes"])|set(row["category_codes"]))
         item["sources"]=sorted(set(item.get("sources",[]))|set(row.get("sources",[])))
+        item["cities"]=sorted(set(item.get("cities",[]))|set(row.get("cities",[])))
     snapshot["references"]=list(combined.values())
     snapshot["registry_sources"]=stats
     counts=Counter(c for r in combined.values() for c in r["category_codes"])

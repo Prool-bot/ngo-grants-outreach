@@ -20,12 +20,13 @@ def merge(previous, current, stamp):
             if not base or not tags:
                 continue
             entry=refs.setdefault(qid,{"source_id":qid,"title":title,
-                "source_url":base["source_url"],"sources":[],
+                "source_url":base["source_url"],"sources":[],"cities":[],
                 "category_codes":[],"status":"REFERENCE_REVIEW_REQUIRED",
                 "first_seen":r.get("first_seen","") if historical else stamp,
                 "last_seen":r.get("last_seen","") if historical else stamp})
             entry["category_codes"]=sorted(set(entry["category_codes"])|tags)
             entry["sources"]=sorted(set(entry["sources"])|set(r.get("sources",["Wikimedia"] if qid.startswith("Q") else [qid.split(":")[0]])))
+            entry["cities"]=sorted(set(entry["cities"])|set(r.get("cities",[])))
             if not historical:
                 entry["last_seen"]=stamp
                 entry["title"]=title
@@ -59,6 +60,10 @@ def main():
     (args.output/"cumulative.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     write_csv(args.output/"cumulative_catalog.csv",["source_id","title","source_url","category_codes","status","first_seen","last_seen","sources"],
         [{**r,"category_codes":"; ".join(r["category_codes"]),"sources":"; ".join(r["sources"])} for r in result["references"]])
+    labels={cat["code"]:cat["label"] for cat in load_categories()}
+    write_csv(args.output/"cumulative_profiles.csv",["Назва організації","Профіль діяльності","Місто"],
+        [{"Назва організації":r["title"],"Профіль діяльності":"; ".join(labels[c] for c in r["category_codes"]),"Місто":"; ".join(r["cities"])} for r in result["references"]])
+    print("PROFILE_CITIES",sum(bool(r["cities"]) for r in result["references"]))
     write_csv(args.output/"cumulative_coverage.csv",["code","group","label","cumulative","previous","growth","last_search_status","last_search_results"],result["coverage"])
     print("CUMULATIVE_REFERENCES",len(result["references"]),"COVERED_CATEGORIES",sum(r["cumulative"]>0 for r in result["coverage"]),"NEW_REFERENCES",len(result["references"])-len(previous.get("references",[])))
 
