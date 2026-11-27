@@ -17,3 +17,14 @@ class CatalogTests(unittest.TestCase):
         self.assertIsNone(select_reference(page,cat))
     def test_csv(self):
         self.assertEqual(csv_cell("=1+1"),"'=1+1")
+
+class AccumulationTests(unittest.TestCase):
+    def test_preserve_and_merge(self):
+        from catalog_research.accumulate import accumulate
+        prior={"references":[{"source_id":"Q1","title":"Example","category_codes":["EDU-01"]},{"source_id":"Q2","title":"Other","category_codes":["ART-05"]}]}
+        current={"references":[{"source_id":"Q1","title":"Example","category_codes":["EDU-07"]},{"source_id":"Q3","title":"New","category_codes":["NGO-03"]}]}
+        result=accumulate(prior,current,"2026-11-27")
+        self.assertEqual(len(result["references"]),3)
+        self.assertEqual(result["references"][0]["category_codes"],["EDU-01","EDU-07"])
+        self.assertEqual(len(result["coverage"]),115)
+        self.assertEqual(len(accumulate(result,{}, "2026-11-28")["references"]),3)
