@@ -6,15 +6,16 @@ on:
       - 'outreach.py'
       - 'smtp_preflight.py'
       - 'public_sources.py'
+      - 'google_preflight.py'
       - 'requirements.txt'
       - 'tests/**'
       - '.github/workflows/outreach.yml'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check = Google API; monitor = procurement; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test'
+        description: 'check = Google API; monitor = procurement; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
         type: choice
-        options: [check, monitor, smtp-check, smtp-self-test, sources-check]
+        options: [check, monitor, smtp-check, smtp-self-test, sources-check, imap-check]
         default: check
 permissions:
   contents: read
@@ -35,11 +36,16 @@ jobs:
       - name: Run explicitly requested mode
         if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor')
         env:
-          GOOGLE_AUTHORIZED_USER_JSON: ${{ secrets.GOOGLE_AUTHORIZED_USER_JSON }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
           MODE: ${{ inputs.mode }}
-        run: python outreach.py --mode "$MODE"
+        run: |
+          if [ -z "$GOOGLE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::Missing GOOGLE_SERVICE_ACCOUNT_JSON"; exit 1
+          fi
+          python outreach.py --mode "$MODE"
       - name: Check SMTP configuration
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test'))
         env:
@@ -60,3 +66,10 @@ jobs:
       - name: Test public procurement APIs
         if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'sources-check'))
         run: python public_sources.py
+      - name: Check IMAP inbox without reading messages
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'imap-check')
+        env:
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
+        run: python google_preflight.py --mode imap-check
