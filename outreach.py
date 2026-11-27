@@ -9,11 +9,12 @@ from zoneinfo import ZoneInfo
 from urllib.robotparser import RobotFileParser
 from public_sources import prozorro_notices, ted_notices
 from directory_sources import directory_entries
+from procurement_quality import triage
 
 ZONE = ZoneInfo("Europe/Istanbul")
 SOURCES = {
     "Громадський Простір": "https://www.prostir.ua/category/grants/?tenders=1",
-    "ГУРТ": "https://gurt.org.ua/news/",
+    "ГУРТ": "https://www.gurt.org.ua/news/grants/",
 }
 USER_AGENT = "NGOGrantsResearch/0.1"
 KEYWORDS = re.compile(r"тендер|закупівл|закупов|цінов\w* пропозиц|запит пропозиц", re.I)
@@ -146,7 +147,19 @@ def run(mode: str) -> int:
             errors.append(f"{name}: {type(e).__name__}")
             source_stats[name] = {"error": type(e).__name__}
     existing = {canonical_url(r[6]) for r in read_values(sheets, sid, "'Закупівлі'!A2:K") if len(r)>6}
-    rows = [r for r in new_rows if canonical_url(r[6]) not in existing]
+    from collections import Counter
+    quality = Counter()
+    rows = []
+    for r in new_rows:
+        status, reason = triage(r[3], r[5], r[7], now.date())
+        quality[status] += 1
+        if status in {"EXCLUDED_NAVIGATION", "EXCLUDED_SECTOR", "LOW_RELEVANCE", "EXPIRED"}:
+            continue
+        r[9] = status
+        r[10] = reason + "; не є підставою для рекламної розсилки"
+        if canonical_url(r[6]) not in existing:
+            rows.append(r)
+    source_stats["quality"] = dict(quality)
     candidates = []
     try:
         orgs, directory_stats = directory_entries(now)
