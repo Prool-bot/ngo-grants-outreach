@@ -92,14 +92,17 @@ def run(mode: str) -> int:
     validate_sender(os.environ["EMAIL_ADDRESS"], expected)
     sheets, drive = file_services()
     config = verify_crm(sheets, sid, expected)
+    print("STAGE PROCUREMENT_READ", flush=True)
     history = read_values(sheets, sid, "'Закупівлі'!A2:K")
     seen = {canonical_url(r[6]) for r in history if len(r) > 6}
     if mode == "check":
         load_price(drive, config["Прайс Drive ID"])
         test_id = "CHECK-" + hashlib.sha256((start + os.getenv("GITHUB_RUN_ID", "")).encode()).hexdigest()[:20]
+        print("STAGE CRM_WRITE_TEST", flush=True)
         append_values(sheets, sid, "'Системний журнал'!A:J",
             [[test_id, cycle, start, datetime.now(ZONE).isoformat(timespec="seconds"),
               "FILE_ACCESS_TEST", "OK", 0, 0, "", ""]])
+        print("STAGE CRM_WRITE_READBACK", flush=True)
         if not any(r and r[0] == test_id for r in read_values(sheets, sid, "'Системний журнал'!A2:A")):
             raise RuntimeError("CRM test write not confirmed")
         print("PASS: CRM read/write, price download and register accessible; no external email")
@@ -158,5 +161,8 @@ if __name__ == "__main__":
         sys.exit(run(parser.parse_args().mode))
     except Exception as e:
         # Public Actions logs must not expose account data, OAuth errors or spreadsheet IDs.
-        print(f"ERROR: {type(e).__name__}; verify secret configuration and API permissions", file=sys.stderr)
+        from googleapiclient.errors import HttpError
+        from google_preflight import safe_http_error
+        diagnostic = safe_http_error(e) if isinstance(e, HttpError) else type(e).__name__
+        print(f"ERROR: {diagnostic}; verify secret configuration and API permissions", file=sys.stderr)
         sys.exit(1)
