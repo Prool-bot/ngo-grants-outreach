@@ -6,8 +6,11 @@ on:
       - 'catalog_research/**'
       - '.github/workflows/catalog-research.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: public-knowledge-catalog
   cancel-in-progress: false
@@ -22,13 +25,43 @@ jobs:
           python-version: '3.12'
       - run: pip install requests
       - run: python -m unittest catalog_research.test_catalog
+      - name: Restore previous reference snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prior=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=public-knowledge-catalog&per_page=100" --jq ".artifacts | map(select(.expired == false and .workflow_run.id != $GITHUB_RUN_ID)) | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty")
+          if [ -z "$prior" ]; then
+            echo "::error::Previous catalog snapshot unavailable; stopping to prevent silent loss"
+            exit 1
+          fi
+          gh run download "$prior" --name public-knowledge-catalog --dir previous
+          test -s previous/cumulative.json || test -s previous/catalog.json
+          echo "PRIOR_CATALOG_RUN $prior"
       - name: Search all 115 categories
-        run: python -m catalog_research.run --output catalog-output
+        id: search
+        continue-on-error: true
+        run: |
+          offset=$(( (($(date -u +%s) / 86400 + 1) % 5) * 10 ))
+          echo "CATALOG_OFFSET $offset"
+          python -m catalog_research.run --output catalog-output --offset "$offset"
+      - name: Accumulate and verify reference snapshot
+        run: |
+          set -euo pipefail
+          previous=previous/cumulative.json
+          if [ ! -s "$previous" ]; then previous=previous/catalog.json; fi
+          test -s catalog-output/catalog.json
+          python -m catalog_research.accumulate --previous "$previous" --current catalog-output/catalog.json --output catalog-output
+          test -s catalog-output/cumulative.json
       - name: Publish research artifacts
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: public-knowledge-catalog
           path: catalog-output/
-          if-no-files-found: warn
-          retention-days: 30
+          if-no-files-found: error
+          retention-days: 90
+      - name: Flag partial search
+        if: steps.search.outcome == 'failure'
+        run: |
+          echo "::error::Search partially failed; cumulative snapshot retained"
+          exit 1
