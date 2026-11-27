@@ -5,15 +5,16 @@ on:
     paths:
       - 'outreach.py'
       - 'smtp_preflight.py'
+      - 'public_sources.py'
       - 'requirements.txt'
       - 'tests/**'
       - '.github/workflows/outreach.yml'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check = Google API; monitor = procurement; smtp-check = SMTP auth; smtp-self-test = own mailbox only'
+        description: 'check = Google API; monitor = procurement; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test'
         type: choice
-        options: [check, monitor, smtp-check, smtp-self-test]
+        options: [check, monitor, smtp-check, smtp-self-test, sources-check]
         default: check
 permissions:
   contents: read
@@ -56,3 +57,6 @@ jobs:
           done
           if [ "$missing" = 1 ]; then exit 1; fi
           python smtp_preflight.py
+      - name: Test public procurement APIs
+        if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'sources-check'))
+        run: python public_sources.py
