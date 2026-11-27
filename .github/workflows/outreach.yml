@@ -10,6 +10,7 @@ on:
       - 'daily_report.py'
       - 'queue_audit.py'
       - 'delivery_register.py'
+      - 'mailbox_dsn.py'
       - 'procurement_quality.py'
       - 'registry_audit.py'
       - 'google_preflight.py'
@@ -21,7 +22,7 @@ on:
       mode:
         description: 'check = Google API; monitor = procurement; preview = read-only full search; pilot = one-time registry test; report = owner-only daily report; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
         type: choice
-        options: [check, monitor, preview, pilot, report-preview, report, report-self-test, queue-audit, registry-audit, smtp-check, smtp-self-test, sources-check, imap-check]
+        options: [check, monitor, preview, pilot, report-preview, report, report-self-test, queue-audit, registry-audit, smtp-check, smtp-self-test, sources-check, imap-check, mailbox-audit]
         default: check
 permissions:
   contents: read
@@ -86,6 +87,24 @@ jobs:
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
         run: python google_preflight.py --mode imap-check
+      - name: Read delivery notices for existing correspondence
+        if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'monitor' || inputs.mode == 'report' || inputs.mode == 'mailbox-audit')))
+        id: mailbox
+        continue-on-error: true
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          CRM_ID: ${{ secrets.CRM_ID }}
+          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$MODE" = "monitor" ] || [ "$MODE" = "report" ]; then
+            python mailbox_dsn.py --apply
+          else
+            python mailbox_dsn.py
+          fi
       - name: Reconcile existing delivery failure records
         if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'monitor' || inputs.mode == 'report' || inputs.mode == 'queue-audit')))
         env:
@@ -103,6 +122,7 @@ jobs:
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
+          MAILBOX_SYNC_OUTCOME: ${{ steps.mailbox.outcome }}
           REPORT_SEND: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'report' }}
           REPORT_SELF_TEST: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'report-self-test') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[owner-report-test]')) }}
         run: |
