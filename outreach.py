@@ -79,11 +79,8 @@ def append_values(service, sheet_id, range_, rows):
             insertDataOption="INSERT_ROWS", body={"values": rows}).execute()
 
 def run(mode: str) -> int:
-    from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
-    credentials = Credentials.from_authorized_user_info(json.loads(os.environ["GOOGLE_AUTHORIZED_USER_JSON"]))
-    sheets = build("sheets", "v4", credentials=credentials, cache_discovery=False)
-    gmail = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+    from google_preflight import file_services, verify_crm, load_price
+    from smtp_preflight import validate_sender
     sid = os.environ["CRM_ID"]
     expected = os.environ["EXPECTED_GMAIL"].strip().lower()
     now = datetime.now(ZONE)
@@ -92,16 +89,20 @@ def run(mode: str) -> int:
         print("SKIPPED: outside work hours")
         return 0
     start = now.isoformat(timespec="seconds")
-    profile = gmail.users().getProfile(userId="me").execute()
-    if profile.get("emailAddress", "").lower() != expected:
-        raise RuntimeError("Wrong Gmail identity; stopped")
-    config = dict((r[0], r[1]) for r in read_values(sheets, sid, "'Налаштування'!A2:B30") if len(r) >= 2)
-    if config.get("Основна пошта", "").lower() != expected:
-        raise RuntimeError("Wrong CRM account configuration; stopped")
+    validate_sender(os.environ["EMAIL_ADDRESS"], expected)
+    sheets, drive = file_services()
+    config = verify_crm(sheets, sid, expected)
     history = read_values(sheets, sid, "'Закупівлі'!A2:K")
     seen = {canonical_url(r[6]) for r in history if len(r) > 6}
     if mode == "check":
-        print("PASS: Gmail identity, CRM and procurement register accessible")
+        load_price(drive, config["Прайс Drive ID"])
+        test_id = "CHECK-" + hashlib.sha256((start + os.getenv("GITHUB_RUN_ID", "")).encode()).hexdigest()[:20]
+        append_values(sheets, sid, "'Системний журнал'!A:J",
+            [[test_id, cycle, start, datetime.now(ZONE).isoformat(timespec="seconds"),
+              "FILE_ACCESS_TEST", "OK", 0, 0, "", ""]])
+        if not any(r and r[0] == test_id for r in read_values(sheets, sid, "'Системний журнал'!A2:A")):
+            raise RuntimeError("CRM test write not confirmed")
+        print("PASS: CRM read/write, price download and register accessible; no external email")
         return 0
     previous = read_values(sheets, sid, "'Системний журнал'!A2:F")
     if any(len(r) >= 6 and r[0] == cycle and r[5] == "OK" for r in previous):
