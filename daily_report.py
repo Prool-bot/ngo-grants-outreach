@@ -19,6 +19,13 @@ def summarize(journal, day):
     discoveries = sum(int(r[6] or 0) for r in journal if len(r)>=8 and r[1].startswith(day) and r[4] in {"DISCOVERY","PILOT"})
     return len(cycles), statuses, discoveries
 
+def cycle_coverage(journal, now):
+    day=now.date().isoformat()
+    expected={f"{day}T{h:02d}:00{now.strftime('%z')}" for h in range(9,18)
+              if now.weekday()<5 and (h<now.hour or (h==now.hour and now.minute>=15))}
+    states={r[0]:r[5] for r in journal if len(r)>=6 and r[4]=="DISCOVERY" and r[0] in expected}
+    return len(expected),len(states),len(expected-set(states)),sum(x=="OK" for x in states.values())
+
 def run(send=False):
     now=datetime.now(ZONE)
     day=now.date().isoformat()
@@ -28,6 +35,7 @@ def run(send=False):
     verify_crm(sheets,sid,address)
     journal=read_values(sheets,sid,"'Системний журнал'!A2:J")
     n, statuses, discoveries=summarize(journal,day)
+    planned, executed, missing, successful=cycle_coverage(journal,now)
     opportunities=read_values(sheets,sid,"'Закупівлі'!A2:K")
     organizations=read_values(sheets,sid,"'Кандидати'!A2:K")
     quality=Counter(triage(r[3],r[5],r[7],now.date())[0] for r in opportunities if len(r)>=8)
@@ -35,7 +43,8 @@ def run(send=False):
     queue=read_values(sheets,sid,"'Черга'!A2:K")
     body=(f"NGO Grants Outreach — {day}\n"
           f"Циклів: {n}; успішних: {statuses['OK']}; часткових: {statuses['PARTIAL']}; помилок: {statuses['ERROR']}\n"
-          f"Нових записів за журналом: {discoveries}\n"
+          f"Планових циклів: {planned}; відмічено у журналі: {executed}; успішних: {successful}; без запису: {missing}\n"
+          f"Нових записів за журналом (включно з пілотами): {discoveries}\n"
           f"Закупівель у реєстрі: {len(opportunities)}\n"
           f"Організацій для дослідження: {len(organizations)}\n"
           f"Категорій організацій з записами: {len(categories)}\n"
@@ -46,6 +55,7 @@ def run(send=False):
         print("REPORT_PREVIEW_OK",n,discoveries,len(opportunities),len(organizations))
         print("PROCUREMENT_QUALITY",dict(quality))
         print("CATEGORY_COVERAGE",len(categories),"QUEUE_ROWS",len(queue))
+        print("SCHEDULE_COVERAGE",planned,executed,missing,successful)
         return
     if now.weekday()>=5 or now.hour!=17 or now.minute<30:
         print("REPORT_SKIPPED_OUTSIDE_WINDOW")
