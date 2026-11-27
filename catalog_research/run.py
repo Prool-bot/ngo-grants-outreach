@@ -57,10 +57,10 @@ def select_reference(page, cat):
         "status":"REFERENCE_REVIEW_REQUIRED"
     }
 
-def search_category(session, cat):
+def search_category(session, cat, offset=0):
     params={"action":"query","format":"json","formatversion":2,"maxlag":5,
         "generator":"search","gsrsearch":cat["query"]+" Україна","gsrnamespace":0,
-        "gsrlimit":10,"prop":"pageprops|pageterms","wbptterms":"description"}
+        "gsrlimit":10,"gsroffset":offset,"prop":"pageprops|pageterms","wbptterms":"description"}
     response=session.get(API,params=params,headers=HEADERS,timeout=(8,18))
     if response.status_code in (429,503):
         raise RuntimeError("SOURCE_PAUSE")
@@ -88,7 +88,7 @@ def write_csv(path, fields, rows):
         writer.writeheader()
         writer.writerows({k:csv_cell(r.get(k,"")) for k in fields} for r in rows)
 
-def run(output, group=None):
+def run(output, group=None, offset=0):
     categories=load_categories()
     if group:
         categories=[r for r in categories if r["group"]==group]
@@ -98,10 +98,10 @@ def run(output, group=None):
     paused=False
     with requests.Session() as session:
         for cat in categories:
-            row={**cat,"raw_results":0,"references":0,"status":"NOT_ATTEMPTED"}
+            row={**cat,"raw_results":0,"references":0,"status":"NOT_ATTEMPTED","offset":offset}
             if not paused:
                 try:
-                    raw,found=search_category(session,cat)
+                    raw,found=search_category(session,cat,offset)
                     refs.extend(found)
                     row.update(raw_results=raw,references=len(found),status="SEARCHED_WITH_REFERENCES" if found else "SEARCHED_NO_REFERENCES")
                 except Exception as exc:
@@ -118,7 +118,7 @@ def run(output, group=None):
         u=unique.setdefault(ref["source_id"],{k:ref[k] for k in ("title","source_id","source_url","status")}|{"category_codes":[]})
         if ref["category_code"] not in u["category_codes"]:
             u["category_codes"].append(ref["category_code"])
-    write_csv(output/"category_coverage.csv",["code","group","label","query","raw_results","references","status","error"],summary)
+    write_csv(output/"category_coverage.csv",["code","group","label","query","offset","raw_results","references","status","error"],summary)
     write_csv(output/"catalog.csv",["title","source_id","source_url","category_codes","status"],
               [{**r,"category_codes":"; ".join(r["category_codes"])} for r in unique.values()])
     (output/"catalog.json").write_text(json.dumps({"coverage":summary,"references":list(unique.values())},ensure_ascii=False,indent=2),encoding="utf-8")
@@ -131,5 +131,6 @@ if __name__=="__main__":
     parser=argparse.ArgumentParser()
     parser.add_argument("--group",choices=list(GROUPS))
     parser.add_argument("--output",type=Path,default=Path("catalog-output"))
+    parser.add_argument("--offset",type=int,choices=range(0,50,10),default=0)
     args=parser.parse_args()
-    raise SystemExit(run(args.output,args.group))
+    raise SystemExit(run(args.output,args.group,args.offset))
