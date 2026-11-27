@@ -19,7 +19,7 @@ SID = "1vILlO0NL4MUahv7zThKMIHud9mvWd0m8p5BWFyvLu28"
 TITLE = "Індивідуальні контакти"
 HEADER = ["Назва організації","Профіль діяльності","Email","Телефон","Місто"]
 UA = "NGOGrantsCatalog/1.0 (+https://github.com/Prool-bot/ngo-grants-outreach)"
-ROLES = re.compile(r"^(info|office|contact[s]?|hello|sales|marketing|advert|ads|adv|reklama|pr|press|editor|support|order|admin|partnership[s]?|communication[s]?|reception|secretariat|service|shop|general|mail|enquiries|inquiries)([._+-][a-z0-9_-]+)?$",re.I)
+ROLES = re.compile(r"^(info|office|contact[s]?|hello|sales|marketing|advert|ads|adv|reklama|pr|press|editor|support|order|admin|partnership[s]?|communication[s]?|reception|secretariat|service|shop|general|mail|enquiries|inquiries)$",re.I)
 EMAIL = re.compile(r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}",re.I)
 EXCLUDED = re.compile(r"аграр|сільськогосподар|agricultur|agronom|військов|military",re.I)
 CONTACT = re.compile(r"контакт|зв[’'ʼ]?язок|contact|kontakt|співпрац|партнерств|collaboration|partnership",re.I)
@@ -199,6 +199,43 @@ def find_contact(session,site,known=""):
         time.sleep(.3)
     return out,fetched
 
+def reference_candidates(api,meta,session,known_names,limit):
+    props=next((s["properties"] for s in meta["sheets"] if s["properties"]["title"]=="Каталог організацій"),None)
+    if not props:
+        return []
+    data=api.get(spreadsheetId=SID,ranges=[f"'Каталог організацій'!A1:C{props['gridProperties']['rowCount']}"],fields="sheets(data(rowData(values(formattedValue,note))) )".replace(" ","")).execute()
+    refs=[]
+    for row in data["sheets"][0].get("data",[{}])[0].get("rowData",[])[1:]:
+        cells=row.get("values",[])
+        if len(cells)<2:
+            continue
+        name=cells[0].get("formattedValue","")
+        profile=cells[1].get("formattedValue","")
+        qid=cells[0].get("note","").split("\n",1)[0]
+        if re.fullmatch(r"Q[1-9][0-9]*",qid) and name and profile and key(name) not in known_names and not EXCLUDED.search(name+" "+profile):
+            refs.append((qid,name,profile))
+    if not refs:
+        return []
+    offset=(dt.date.today().toordinal()*max(1,limit))%len(refs)
+    refs=(refs[offset:]+refs[:offset])[:min(45,limit*3)]
+    try:
+        response=session.get("https://www.wikidata.org/w/api.php",params={"action":"wbgetentities","ids":"|".join(r[0] for r in refs),"props":"claims","format":"json"},timeout=(5,15))
+        response.raise_for_status()
+        entities=response.json().get("entities",{})
+    except (requests.RequestException,ValueError):
+        return []
+    def claims(e,p):
+        return [s.get("mainsnak",{}).get("datavalue",{}).get("value") for s in e.get("claims",{}).get(p,[]) if s.get("rank")!="deprecated"]
+    result=[]
+    for qid,name,profile in refs:
+        e=entities.get(qid,{})
+        ua=any(isinstance(v,dict) and v.get("id")=="Q212" for v in claims(e,"P17"))
+        for site in claims(e,"P856"):
+            if isinstance(site,str) and (ua or host(site).endswith(".ua")) and safe_url(site):
+                result.append((None,name,profile,"",site,[""]*5))
+                break
+    return result
+
 def read(api,sid,title,ran):
     return api.values().get(spreadsheetId=sid,range=f"'{title}'!{ran}").execute().get("values",[])
 def pad(row,n):
@@ -252,7 +289,11 @@ def main():
             return seq
         offset=(dt.date.today().toordinal()*10)%len(seq)
         return seq[offset:]+seq[:offset]
-    todo=rotate(todo)[:max(1,args.limit//2)]+rotate(new)[:max(1,args.limit//2)]
+    todo=rotate(todo)[:max(1,args.limit//2)]
+    with requests.Session() as ref_session:
+        ref_session.headers["User-Agent"]=UA
+        refs=reference_candidates(api,meta,ref_session,known_names,max(1,args.limit//4))
+    todo+=rotate(new)[:max(1,args.limit//4)]+refs[:max(1,args.limit//4)]
     appended=[]
     checked=0
     with requests.Session() as session:
@@ -261,6 +302,9 @@ def main():
             result,fetched=find_contact(session,site,known)
             checked+=int(fetched)
             if i is not None:
+                # Corroborate existing mailbox or its official domain before merging.
+                if known and not (email_key(result.get("email",("", ""))[0])==email_key(known) or host(site)==known.split("@")[-1].lower()):
+                    continue
                 # Never replace a user's entered value.
                 for col,label in [(2,"email"),(3,"phone"),(4,"city")]:
                     if not old[col] and label in result:
