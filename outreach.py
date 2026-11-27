@@ -81,8 +81,7 @@ def append_values(service, sheet_id, range_, rows):
             insertDataOption="INSERT_ROWS", body={"values": rows}).execute()
 
 def run(mode: str) -> int:
-    from google_preflight import file_services, verify_crm, load_price
-    from smtp_preflight import validate_sender
+    from google_preflight import file_services, verify_crm
     sid = os.environ["CRM_ID"]
     expected = os.environ["EXPECTED_GMAIL"].strip().lower()
     now = datetime.now(ZONE)
@@ -91,14 +90,12 @@ def run(mode: str) -> int:
         print("SKIPPED: outside work hours")
         return 0
     start = now.isoformat(timespec="seconds")
-    validate_sender(os.environ["EMAIL_ADDRESS"], expected)
     sheets, drive = file_services()
     config = verify_crm(sheets, sid, expected)
     print("STAGE PROCUREMENT_READ", flush=True)
     history = read_values(sheets, sid, "'Закупівлі'!A2:K")
     seen = {canonical_url(r[6]) for r in history if len(r) > 6}
     if mode == "check":
-        load_price(drive, config["Прайс Drive ID"])
         test_id = "CHECK-" + hashlib.sha256((start + os.getenv("GITHUB_RUN_ID", "")).encode()).hexdigest()[:20]
         print("STAGE CRM_WRITE_TEST", flush=True)
         append_values(sheets, sid, "'Системний журнал'!A:J",
@@ -107,7 +104,7 @@ def run(mode: str) -> int:
         print("STAGE CRM_WRITE_READBACK", flush=True)
         if not any(r and r[0] == test_id for r in read_values(sheets, sid, "'Системний журнал'!A2:A")):
             raise RuntimeError("CRM test write not confirmed")
-        print("PASS: CRM read/write, price download and register accessible; no external email")
+        print("PASS: CRM read/write and register accessible")
         return 0
     previous = read_values(sheets, sid, "'Системний журнал'!A2:F")
     if mode == "monitor" and any(len(r) >= 6 and r[0] == cycle and r[5] == "OK" and r[4] == "DISCOVERY" for r in previous):

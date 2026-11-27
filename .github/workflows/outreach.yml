@@ -1,16 +1,11 @@
-name: NGO Grants Outreach — procurement monitoring
+name: NGO Grants — procurement research
 on:
   push:
     branches: [main]
     paths:
       - 'outreach.py'
-      - 'smtp_preflight.py'
       - 'public_sources.py'
       - 'directory_sources.py'
-      - 'daily_report.py'
-      - 'queue_audit.py'
-      - 'delivery_register.py'
-      - 'mailbox_dsn.py'
       - 'procurement_quality.py'
       - 'registry_audit.py'
       - 'google_preflight.py'
@@ -20,9 +15,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check = Google API; monitor = procurement; preview = read-only full search; pilot = one-time registry test; report = owner-only daily report; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
+        description: 'Registry research only; legacy report mode is disabled'
         type: choice
-        options: [check, monitor, preview, pilot, report-preview, report, report-self-test, queue-audit, registry-audit, smtp-check, smtp-self-test, sources-check, imap-check, mailbox-audit]
+        options: [check, monitor, preview, pilot, sources-check, registry-audit, report]
         default: check
 permissions:
   contents: read
@@ -40,112 +35,28 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests
-      - name: Run explicitly requested mode
+      - name: Research registry
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor' || inputs.mode == 'preview' || inputs.mode == 'pilot'))
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
-          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
           MODE: ${{ github.event_name == 'push' && 'check' || inputs.mode }}
-          PILOT_REQUEST: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[one-time-pilot]') }}
         run: |
-          if [ -z "$GOOGLE_SERVICE_ACCOUNT_JSON" ]; then
-            echo "::error::Missing GOOGLE_SERVICE_ACCOUNT_JSON"; exit 1
-          fi
           python outreach.py --mode "$MODE"
-          if [ "$MODE" = "check" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            python outreach.py --mode preview
-            if [ "$PILOT_REQUEST" = "true" ]; then python outreach.py --mode pilot; fi
-          fi
-      - name: Check SMTP configuration
-        if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test')))
-        env:
-          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
-          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
-          SEND_SELF_TEST: ${{ inputs.mode == 'smtp-self-test' }}
-        run: |
-          missing=0
-          for key in EMAIL_ADDRESS EMAIL_APP_PASSWORD EXPECTED_GMAIL; do
-            if [ -z "${!key}" ]; then
-              echo "::error::Missing repository secret: $key"
-              missing=1
-            fi
-          done
-          if [ "$missing" = 1 ]; then exit 1; fi
-          python smtp_preflight.py
-      - name: Test public procurement APIs
-        if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'sources-check'))
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then python outreach.py --mode preview; fi
+      - name: Check public procurement APIs
+        if: github.event_name == 'push' || inputs.mode == 'sources-check'
         run: python public_sources.py
-      - name: Check IMAP inbox without reading messages
-        if: (github.event_name == 'workflow_dispatch' && inputs.mode == 'imap-check') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[imap-recheck]'))
-        continue-on-error: true
-        env:
-          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
-          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
-        run: python google_preflight.py --mode imap-check
-      - name: Read delivery notices for existing correspondence
-        if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'monitor' || inputs.mode == 'report' || inputs.mode == 'mailbox-audit')))
-        id: mailbox
-        continue-on-error: true
-        env:
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
-          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
-          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-          CRM_ID: ${{ secrets.CRM_ID }}
-          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
-          MODE: ${{ inputs.mode }}
-        run: |
-          if [ "$MODE" = "monitor" ] || [ "$MODE" = "report" ]; then
-            python mailbox_dsn.py --apply
-          else
-            python mailbox_dsn.py
-          fi
-      - name: Reconcile existing delivery failure records
-        if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'monitor' || inputs.mode == 'report' || inputs.mode == 'queue-audit')))
-        env:
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
-          CRM_ID: ${{ secrets.CRM_ID }}
-          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
-        run: python delivery_register.py
-      - name: Owner report
-        if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'report-preview' || inputs.mode == 'report' || inputs.mode == 'report-self-test')))
-        env:
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
-          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
-          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-          CRM_ID: ${{ secrets.CRM_ID }}
-          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
-          MAILBOX_SYNC_OUTCOME: ${{ steps.mailbox.outcome }}
-          REPORT_SEND: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'report' }}
-          REPORT_SELF_TEST: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'report-self-test') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[owner-report-test]')) }}
-        run: |
-          if [ "$REPORT_SELF_TEST" = "true" ]; then
-            python daily_report.py --self-test
-          elif [ "$REPORT_SEND" = "true" ]; then
-            python daily_report.py --send
-          else
-            python daily_report.py
-          fi
-      - name: Audit manually approved correspondence queue
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'queue-audit')
-        env:
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
-          CRM_ID: ${{ secrets.CRM_ID }}
-          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
-        run: python queue_audit.py
-      - name: Refresh unreviewed procurement statuses
-        if: success() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'monitor' || inputs.mode == 'registry-audit')))
+      - name: Refresh procurement statuses
+        if: success() && (github.event_name == 'push' || inputs.mode == 'monitor' || inputs.mode == 'registry-audit')
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
         run: python registry_audit.py --apply
+      - name: Legacy report retired
+        if: inputs.mode == 'report'
+        run: echo 'MAIL_MODULE_REMOVED; no mail operation'
