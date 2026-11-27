@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 
 SID = "1vILlO0NL4MUahv7zThKMIHud9mvWd0m8p5BWFyvLu28"
 TITLE = "Індивідуальні контакти"
-HEADER = ["Назва організації","Профіль діяльності","Email","Телефон","Місто"]
+HEADER = ["Назва організації","Профіль діяльності","Email","Телефон","Місто","Код категорії","Категорія","Короткий опис діяльності","Статус контакту"]
 UA = "NGOGrantsCatalog/1.0 (+https://github.com/Prool-bot/ngo-grants-outreach)"
 ROLES = re.compile(r"^(info|office|contact[s]?|hello|sales|marketing|advert|ads|adv|reklama|pr|press|editor|support|order|admin|partnership[s]?|communication[s]?|reception|secretariat|service|shop|general|mail|enquiries|inquiries)$",re.I)
 EMAIL = re.compile(r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}",re.I)
@@ -161,6 +161,19 @@ def extract(soup,known=""):
             add(cities,c)
     return emails,phones,cities
 
+def site_description(soup):
+    for selector in ('meta[property="og:description"]','meta[name="description"]'):
+        node=soup.select_one(selector)
+        if not node:
+            continue
+        value=re.sub(r"\s+"," ",str(node.get("content",""))).strip()
+        if not re.search(r"[а-яіїєґ]",value,re.I) or re.search(r"cookie|файли cookie|купити|знижк|доставк|підписуйт|увійти",value,re.I):
+            continue
+        first=re.split(r"(?<=[.!?])\s+",value,maxsplit=1)[0].strip()
+        if 25<=len(first)<=210:
+            return first.rstrip(".!?")+"."
+    return ""
+
 def find_contact(session,site,known=""):
     if not site or not safe_url(site):
         return {},False
@@ -183,13 +196,16 @@ def find_contact(session,site,known=""):
         fetched=True
         soup=BeautifulSoup(response.content,"html.parser")
         e,p,c=extract(soup,known)
+        description=site_description(soup)
+        if description and "description" not in out:
+            out["description"]=(description,response.url)
         if e and "email" not in out:
             out["email"]=(known if known and any(email_key(x)==email_key(known) for x in e) else e[0],response.url)
         if p and "phone" not in out:
             out["phone"]=("; ".join(p[:3]),response.url)
         if c and "city" not in out:
             out["city"]=("; ".join(c[:3]),response.url)
-        if len(out)==3:
+        if all(k in out for k in ("email","phone","city","description")):
             break
         for a in soup.select("a[href]"):
             if CONTACT.search(a.get_text(" ",strip=True)) or CONTACT.search(a["href"]):
@@ -256,9 +272,11 @@ def main():
     meta=api.get(spreadsheetId=SID,fields="sheets(properties)").execute()
     props=next(s["properties"] for s in meta["sheets"] if s["properties"]["title"]==TITLE)
     tab=props["sheetId"]
-    existing=read(api,SID,TITLE,"A1:E"+str(props["gridProperties"]["rowCount"]))
+    existing=read(api,SID,TITLE,"A1:I"+str(props["gridProperties"]["rowCount"]))
     if existing[0]!=HEADER:
         raise ValueError("Unexpected contact table headers")
+    from catalog_research.run import load_categories
+    labels={x["label"]:x["code"] for x in load_categories()}
     crm=read(api,SID,"Контрагенти","A1:E1000")
     if crm[0][:5]!=["ID","Організація","Сектор","Email","Раніше зазначене джерело"]:
         raise ValueError("Unexpected historical source headers")
@@ -267,7 +285,7 @@ def main():
     if candidates[0][:6]!=["ID","Організація","ЄДРПОУ","Категорія","Сайт","Джерело"]:
         raise ValueError("Unexpected candidate headers")
     sources={email_key(r[3]):r[4] for row in crm[1:] if (r:=pad(row,5))[3] and r[4]}
-    rows=[pad(r,5) for r in existing[1:]]
+    rows=[pad(r,9) for r in existing[1:]]
     known_names={key(r[0]) for r in rows if r[0]}
     known_emails={email_key(r[2]) for r in rows if r[2]}
     stamp=dt.datetime.now(dt.timezone.utc).date().isoformat()
@@ -312,22 +330,27 @@ def main():
                         if col==2 and email_key(value) in known_emails:
                             continue
                         put(i,col,value,url)
-            elif all(k in result for k in ("email","phone","city")) and key(name) not in known_names and email_key(result["email"][0]) not in known_emails:
+            elif all(k in result for k in ("email","phone","city")) and key(name) not in known_names and email_key(result["email"][0]) not in known_emails and profile in labels:
                 known_names.add(key(name)); known_emails.add(email_key(result["email"][0]))
-                appended.append({"values":[cell(name,"Офіційний сайт: "+site),cell(profile)]+[cell(result[k][0],"Офіційне джерело: "+result[k][1]+" | "+stamp) for k in ("email","phone","city")]})
+                description,desc_url=result.get("description",(f"Попередньо віднесено до напряму «{profile}».",""))
+                desc_note=("Опис з офіційного сайту: "+desc_url+" | "+stamp) if desc_url else "Попередній опис за класифікатором; уточнити профіль."
+                appended.append({"values":[cell(name,"Офіційний сайт: "+site),cell(profile)]+[cell(result[k][0],"Офіційне джерело: "+result[k][1]+" | "+stamp) for k in ("email","phone","city")]+[cell(labels[profile],"Попередня класифікація"),cell(profile),cell(description,desc_note),cell("Не визначено","Ручний статус; згода не встановлена.")]})
     if appended:
         start=len(existing)
         end=start+len(appended)
         if end>props["gridProperties"]["rowCount"]:
             requests_out.insert(0,{"appendDimension":{"sheetId":tab,"dimension":"ROWS","length":max(100,len(appended))}})
         requests_out.append({"updateCells":{"start":{"sheetId":tab,"rowIndex":start,"columnIndex":0},"rows":appended,"fields":"userEnteredValue,note"}})
-        requests_out.append({"setBasicFilter":{"filter":{"range":{"sheetId":tab,"startRowIndex":0,"endRowIndex":end,"startColumnIndex":0,"endColumnIndex":5}}}})
+        requests_out.append({"setDataValidation":{"range":{"sheetId":tab,"startRowIndex":start,"endRowIndex":end,"startColumnIndex":8,"endColumnIndex":9},"rule":{"condition":{"type":"ONE_OF_LIST","values":[{"userEnteredValue":v} for v in ["Не визначено","Не телефонували","Не відповідають","Передзвонити","Згоду отримано","Пропозицію надіслано","Зацікавлені","Відмовилися","Співпрацюємо"]]},"strict":True,"showCustomUi":True}}})
+        requests_out.append({"setBasicFilter":{"filter":{"range":{"sheetId":tab,"startRowIndex":0,"endRowIndex":end,"startColumnIndex":0,"endColumnIndex":9}}}})
+    if len(existing)+len(appended)>1:
+        requests_out.append({"sortRange":{"range":{"sheetId":tab,"startRowIndex":1,"endRowIndex":len(existing)+len(appended),"startColumnIndex":0,"endColumnIndex":9},"sortSpecs":[{"dimensionIndex":5,"sortOrder":"ASCENDING"},{"dimensionIndex":0,"sortOrder":"ASCENDING"}]}})
     if requests_out:
         # Guard against changes made while researching. No stale-row writes.
-        if read(api,SID,TITLE,"A1:E"+str(props["gridProperties"]["rowCount"]))!=existing:
+        if read(api,SID,TITLE,"A1:I"+str(props["gridProperties"]["rowCount"]))!=existing:
             raise RuntimeError("Contact table changed during research; retry next run")
         api.batchUpdate(spreadsheetId=SID,body={"requests":requests_out}).execute()
-    final=read(api,SID,TITLE,"A1:E"+str(max(props["gridProperties"]["rowCount"],len(existing)+len(appended))))
+    final=read(api,SID,TITLE,"A1:I"+str(max(props["gridProperties"]["rowCount"],len(existing)+len(appended))))
     if final[0]!=HEADER or len(final)<len(existing)+len(appended):
         raise RuntimeError("Readback failed")
     print("CONTACT_CATALOG", "attempted",len(todo),"sites_accessed",checked,"updated_cells",sum("updateCells" in r for r in requests_out)-bool(appended),"new_complete",len(appended),"total_rows",len(final)-1,"complete",sum(all(pad(r,5)[:5]) for r in final[1:]),flush=True)
