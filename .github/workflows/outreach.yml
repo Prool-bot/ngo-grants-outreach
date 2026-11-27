@@ -1,0 +1,40 @@
+name: NGO Grants Outreach — procurement monitoring
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'outreach.py'
+      - 'requirements.txt'
+      - 'tests/**'
+      - '.github/workflows/outreach.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check = connection test; monitor = procurement discovery'
+        type: choice
+        options: [check, monitor]
+        default: check
+permissions:
+  contents: read
+concurrency:
+  group: outreach-crm
+  cancel-in-progress: false
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests
+      - name: Run explicitly requested mode
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GOOGLE_AUTHORIZED_USER_JSON: ${{ secrets.GOOGLE_AUTHORIZED_USER_JSON }}
+          CRM_ID: ${{ secrets.CRM_ID }}
+          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
+          MODE: ${{ inputs.mode }}
+        run: python outreach.py --mode "$MODE"
