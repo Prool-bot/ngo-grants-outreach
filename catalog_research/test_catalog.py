@@ -49,3 +49,17 @@ class RegistryReferenceTests(unittest.TestCase):
         self.assertEqual(len(result["references"]),2)
         q=next(x for x in result["references"] if x["source_id"]=="Q123")
         self.assertEqual(q["sources"],["ROR","Wikimedia"])
+
+class SectorResourcesTests(unittest.TestCase):
+    def test_merge_preserves_topics(self):
+        from catalog_research.sector_resources import row,merge
+        a=row("TED","1-2026","Example notice","HYGIENE","PROCUREMENT_NOTICE","https://ted.europa.eu/en/notice/-/detail/1-2026")
+        b={**a,"topics":["MEDICAL"]}
+        merged=merge([a],[b])
+        self.assertEqual(len(merged),1)
+        self.assertEqual(merged[0]["topics"],["HYGIENE","MEDICAL"])
+        self.assertNotIn("buyer",merged[0])
+        self.assertNotIn("email",merged[0])
+    def test_text_field(self):
+        from catalog_research.sector_resources import text_value
+        self.assertEqual(text_value({"ENG":["Example"]}),"Example")
