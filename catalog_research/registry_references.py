@@ -86,3 +86,43 @@ def collect(offset):
         except Exception as e:
             stats.append({"source":"Crossref","code":"NGO-12","status":"ERROR","error":type(e).__name__,"found":0})
     return refs,stats
+
+def main():
+    import argparse,json
+    from pathlib import Path
+    from collections import Counter
+    from catalog_research.run import write_csv
+    p=argparse.ArgumentParser()
+    p.add_argument("--output",type=Path,required=True)
+    p.add_argument("--offset",type=int,default=0)
+    a=p.parse_args()
+    path=a.output/"catalog.json"
+    snapshot=json.loads(path.read_text(encoding="utf-8"))
+    original=snapshot["references"]
+    for row in original:
+        row.setdefault("sources",["Wikimedia"])
+    refs,stats=collect(a.offset)
+    combined={}
+    for row in original+refs:
+        item=combined.setdefault(row["source_id"],row.copy())
+        item["category_codes"]=sorted(set(item["category_codes"])|set(row["category_codes"]))
+        item["sources"]=sorted(set(item.get("sources",[]))|set(row.get("sources",[])))
+    snapshot["references"]=list(combined.values())
+    snapshot["registry_sources"]=stats
+    counts=Counter(c for r in combined.values() for c in r["category_codes"])
+    for row in snapshot["coverage"]:
+        row["references"]=counts[row["code"]]
+        if row["status"].startswith("SEARCHED") and row["references"]:
+            row["status"]="SEARCHED_WITH_REFERENCES"
+    path.write_text(json.dumps(snapshot,ensure_ascii=False,indent=2),encoding="utf-8")
+    write_csv(a.output/"catalog.csv",["title","source_id","source_url","category_codes","status","sources"],
+        [{**r,"category_codes":"; ".join(r["category_codes"]),"sources":"; ".join(r["sources"])} for r in combined.values()])
+    write_csv(a.output/"category_coverage.csv",["code","group","label","query","offset","raw_results","references","status","error"],snapshot["coverage"])
+    write_csv(a.output/"registry_sources.csv",["source","code","status","found","error"],stats)
+    for r in stats:
+        print("REGISTRY_SOURCE",r["source"],r["code"],r["status"],r["found"],r.get("error",""))
+    print("MULTISOURCE_REFERENCES",len(combined),"ADDITIONAL_IDENTIFIERS",len(combined)-len(original))
+    return 1 if any(r["status"]!="OK" for r in stats) else 0
+
+if __name__=="__main__":
+    raise SystemExit(main())
