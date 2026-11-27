@@ -58,6 +58,10 @@ jobs:
           test -s catalog-output/catalog.json
           python -m catalog_research.accumulate --previous "$previous" --current catalog-output/catalog.json --output catalog-output
           test -s catalog-output/cumulative.json
+      - name: Search and accumulate sector information resources
+        id: sectors
+        continue-on-error: true
+        run: python -m catalog_research.sector_resources --output catalog-output --previous previous/sector_resources.json --offset "$CATALOG_OFFSET"
       - name: Publish research artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -66,7 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Flag partial search
-        if: steps.search.outcome == 'failure' || steps.registries.outcome == 'failure'
+        if: steps.search.outcome == 'failure' || steps.registries.outcome == 'failure' || steps.sectors.outcome == 'failure'
         run: |
           echo "::error::Search partially failed; cumulative snapshot retained"
           exit 1
