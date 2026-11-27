@@ -6,6 +6,7 @@ from email.message import EmailMessage
 from outreach import ZONE, read_values, append_values
 from google_preflight import file_services, verify_crm
 from smtp_preflight import validate_sender
+from procurement_quality import triage
 
 def summarize(journal, day):
     cycles = {}
@@ -29,14 +30,22 @@ def run(send=False):
     n, statuses, discoveries=summarize(journal,day)
     opportunities=read_values(sheets,sid,"'Закупівлі'!A2:K")
     organizations=read_values(sheets,sid,"'Кандидати'!A2:K")
+    quality=Counter(triage(r[3],r[5],r[7],now.date())[0] for r in opportunities if len(r)>=8)
+    categories=Counter(str(r[3]).split(" — ",1)[0] for r in organizations if len(r)>3)
+    queue=read_values(sheets,sid,"'Черга'!A2:K")
     body=(f"NGO Grants Outreach — {day}\n"
           f"Циклів: {n}; успішних: {statuses['OK']}; часткових: {statuses['PARTIAL']}; помилок: {statuses['ERROR']}\n"
           f"Нових записів за журналом: {discoveries}\n"
           f"Закупівель у реєстрі: {len(opportunities)}\n"
           f"Організацій для дослідження: {len(organizations)}\n"
+          f"Категорій організацій з записами: {len(categories)}\n"
+          f"Записів у черзі звернень: {len(queue)}\n"
+          "Якість закупівель (автоматична попередня оцінка): "+", ".join(f"{k}: {v}" for k,v in sorted(quality.items()))+"\n"
           "Зовнішня розсилка не активована. Результати потребують перевірки.\n")
     if not send:
         print("REPORT_PREVIEW_OK",n,discoveries,len(opportunities),len(organizations))
+        print("PROCUREMENT_QUALITY",dict(quality))
+        print("CATEGORY_COVERAGE",len(categories),"QUEUE_ROWS",len(queue))
         return
     if now.weekday()>=5 or now.hour!=17 or now.minute<30:
         print("REPORT_SKIPPED_OUTSIDE_WINDOW")
