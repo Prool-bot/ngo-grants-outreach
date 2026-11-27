@@ -6,6 +6,8 @@ on:
       - 'outreach.py'
       - 'smtp_preflight.py'
       - 'public_sources.py'
+      - 'directory_sources.py'
+      - 'daily_report.py'
       - 'google_preflight.py'
       - 'requirements.txt'
       - 'tests/**'
@@ -13,9 +15,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check = Google API; monitor = procurement; preview = read-only full search; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
+        description: 'check = Google API; monitor = procurement; preview = read-only full search; pilot = one-time registry test; report = owner-only daily report; smtp-check = SMTP auth; smtp-self-test = own mailbox only; sources-check = public API test; imap-check = mailbox read-only test'
         type: choice
-        options: [check, monitor, preview, smtp-check, smtp-self-test, sources-check, imap-check]
+        options: [check, monitor, preview, pilot, report-preview, report, smtp-check, smtp-self-test, sources-check, imap-check]
         default: check
 permissions:
   contents: read
@@ -34,7 +36,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests
       - name: Run explicitly requested mode
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor' || inputs.mode == 'preview'))
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'check' || inputs.mode == 'monitor' || inputs.mode == 'preview' || inputs.mode == 'pilot'))
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
@@ -42,6 +44,7 @@ jobs:
           CRM_ID: ${{ secrets.CRM_ID }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
           MODE: ${{ github.event_name == 'push' && 'check' || inputs.mode }}
+          PILOT_REQUEST: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[one-time-pilot]') }}
         run: |
           if [ -z "$GOOGLE_SERVICE_ACCOUNT_JSON" ]; then
             echo "::error::Missing GOOGLE_SERVICE_ACCOUNT_JSON"; exit 1
@@ -49,6 +52,7 @@ jobs:
           python outreach.py --mode "$MODE"
           if [ "$MODE" = "check" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
             python outreach.py --mode preview
+            if [ "$PILOT_REQUEST" = "true" ]; then python outreach.py --mode pilot; fi
           fi
       - name: Check SMTP configuration
         if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'smtp-check' || inputs.mode == 'smtp-self-test')))
@@ -77,3 +81,15 @@ jobs:
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
         run: python google_preflight.py --mode imap-check
+      - name: Owner report
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'report-preview' || inputs.mode == 'report'))
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          EXPECTED_SERVICE_ACCOUNT: ngo-grants-outreach@ngo-grants-outreach.iam.gserviceaccount.com
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          CRM_ID: ${{ secrets.CRM_ID }}
+          EXPECTED_GMAIL: ${{ secrets.EXPECTED_GMAIL }}
+          REPORT_SEND: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'report' }}
+        run: |
+          if [ "$REPORT_SEND" = "true" ]; then python daily_report.py --send; else python daily_report.py; fi
