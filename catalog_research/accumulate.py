@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from catalog_research.run import load_categories, write_csv
+from catalog_research.registry_references import reference
 
 def merge(previous, current, stamp):
     codes={r["code"] for r in load_categories()}
@@ -15,14 +16,16 @@ def merge(previous, current, stamp):
             qid=r.get("source_id","")
             title=str(r.get("title","")).strip()
             tags=set(r.get("category_codes",[])) & codes
-            if not re.fullmatch(r"Q[1-9]\d*",qid) or not title or not tags:
+            base=reference(qid,title,next(iter(tags),""))
+            if not base or not tags:
                 continue
             entry=refs.setdefault(qid,{"source_id":qid,"title":title,
-                "source_url":"https://www.wikidata.org/wiki/"+qid,
+                "source_url":base["source_url"],"sources":[],
                 "category_codes":[],"status":"REFERENCE_REVIEW_REQUIRED",
                 "first_seen":r.get("first_seen","") if historical else stamp,
                 "last_seen":r.get("last_seen","") if historical else stamp})
             entry["category_codes"]=sorted(set(entry["category_codes"])|tags)
+            entry["sources"]=sorted(set(entry["sources"])|set(r.get("sources",["Wikimedia"] if qid.startswith("Q") else [qid.split(":")[0]])))
             if not historical:
                 entry["last_seen"]=stamp
                 entry["title"]=title
@@ -54,8 +57,8 @@ def main():
     result=accumulate(previous,current,datetime.now(timezone.utc).isoformat(timespec="seconds"))
     args.output.mkdir(parents=True,exist_ok=True)
     (args.output/"cumulative.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
-    write_csv(args.output/"cumulative_catalog.csv",["source_id","title","source_url","category_codes","status","first_seen","last_seen"],
-        [{**r,"category_codes":"; ".join(r["category_codes"])} for r in result["references"]])
+    write_csv(args.output/"cumulative_catalog.csv",["source_id","title","source_url","category_codes","status","first_seen","last_seen","sources"],
+        [{**r,"category_codes":"; ".join(r["category_codes"]),"sources":"; ".join(r["sources"])} for r in result["references"]])
     write_csv(args.output/"cumulative_coverage.csv",["code","group","label","cumulative","previous","growth","last_search_status","last_search_results"],result["coverage"])
     print("CUMULATIVE_REFERENCES",len(result["references"]),"COVERED_CATEGORIES",sum(r["cumulative"]>0 for r in result["coverage"]),"NEW_REFERENCES",len(result["references"])-len(previous.get("references",[])))
 
