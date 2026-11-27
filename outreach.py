@@ -108,27 +108,30 @@ def run(mode: str) -> int:
         print("PASS: CRM read/write, price download and register accessible; no external email")
         return 0
     previous = read_values(sheets, sid, "'Системний журнал'!A2:F")
-    if any(len(r) >= 6 and r[0] == cycle and r[5] == "OK" for r in previous):
+    if mode == "monitor" and any(len(r) >= 6 and r[0] == cycle and r[5] == "OK" and r[4] == "DISCOVERY" for r in previous):
         print("SKIPPED: this cycle already succeeded")
         return 0
-    new_rows, errors = [], []
+    new_rows, errors, source_stats = [], [], {}
     for name, url in SOURCES.items():
         try:
             found = parse_listing(fetch_listing(url), url)
-            if not found:
-                raise RuntimeError("No matching announcement links; inspect parser/source")
+            source_stats[name] = {"found": len(found), "new": 0}
             for title, link in found:
                 if link in seen:
                     continue
                 seen.add(link)
+                source_stats[name]["new"] += 1
                 key = hashlib.sha256(link.encode()).hexdigest()[:24]
                 new_rows.append([key, "", name, title, "", "", link, "", "Потрібна оцінка", "NEW",
                     "Організатора, предмет і дедлайн перевірити; не є підставою для розсилки"])
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}")
+            source_stats[name] = {"error": type(e).__name__}
     for name, action in [("Prozorro", prozorro_notices), ("TED", lambda: ted_notices(now.date()))]:
         try:
-            for notice in action():
+            notices = action()
+            source_stats[name] = {"found": len(notices), "new": 0}
+            for notice in notices:
                 link = canonical_url(notice["url"])
                 if not link or link in seen:
                     continue
@@ -139,8 +142,12 @@ def run(mode: str) -> int:
                     "Офіційний API; перевірити умови та актуальність закупівлі"])
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}")
+            source_stats[name] = {"error": type(e).__name__}
     existing = {canonical_url(r[6]) for r in read_values(sheets, sid, "'Закупівлі'!A2:K") if len(r)>6}
     rows = [r for r in new_rows if canonical_url(r[6]) not in existing]
+    if mode == "preview":
+        print(json.dumps({"mode": "preview", "sources": source_stats, "new_announcements": len(rows), "sent": 0, "errors": errors}, ensure_ascii=False))
+        return 1 if errors else 0
     if rows:
         append_values(sheets, sid, "'Закупівлі'!A:K", rows)
         ids = {r[0] for r in read_values(sheets, sid, "'Закупівлі'!A2:A") if r}
@@ -151,12 +158,12 @@ def run(mode: str) -> int:
     run_url = f"{os.getenv('GITHUB_SERVER_URL','https://github.com')}/{os.getenv('GITHUB_REPOSITORY','')}/actions/runs/{os.getenv('GITHUB_RUN_ID','')}" if os.getenv("GITHUB_RUN_ID") else ""
     append_values(sheets, sid, "'Системний журнал'!A:J",
         [[cycle, cycle, start, end, "DISCOVERY", status, len(rows), 0, "; ".join(errors), run_url]])
-    print(json.dumps({"status": status, "new_announcements": len(rows), "sent": 0, "errors": errors}, ensure_ascii=False))
+    print(json.dumps({"status": status, "sources": source_stats, "new_announcements": len(rows), "sent": 0, "errors": errors}, ensure_ascii=False))
     return 1 if errors else 0
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["check", "monitor"], default="check")
+    parser.add_argument("--mode", choices=["check", "monitor", "preview"], default="check")
     try:
         sys.exit(run(parser.parse_args().mode))
     except Exception as e:
