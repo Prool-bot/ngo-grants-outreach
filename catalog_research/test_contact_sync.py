@@ -1,6 +1,6 @@
 import unittest
 from bs4 import BeautifulSoup
-from catalog_research.contact_sync import extract, generic_email, phone, key, eligible_new, canonical_profile, balanced
+from catalog_research.contact_sync import extract, generic_email, phone, key, eligible_new, canonical_profile, balanced, classify_candidate, description_for, neutral_sentence, site_evidence
 
 class ContactTests(unittest.TestCase):
     def test_organization_only(self):
@@ -34,3 +34,30 @@ class ContactTests(unittest.TestCase):
         self.assertEqual(canonical_profile("Example","unknown",{}),"")
         items=[(None,"a","X"),(None,"b","X"),(None,"c","Y")]
         self.assertEqual([i[2] for i in balanced(items,0)],["X","Y","X"])
+
+    def test_animal_rehabilitation_not_human(self):
+        cats=[{"code":"DEV-07","label":"Реабілітаційні центри","query":"реабілітаційний центр"}]
+        result={"evidence":("Парк диких тварин; центр реабілітації тварин; реабілітаційний центр","https://example.org")}
+        self.assertEqual(classify_candidate("Парк хижаків Арден","Реабілітаційні центри",result,cats),("","animal_not_human_rehabilitation"))
+        result={"evidence":("Реабілітаційний центр, фізична терапія пацієнтів","https://example.org")}
+        self.assertEqual(classify_candidate("Центр","Реабілітаційні центри",result,cats)[1],"confirmed")
+    def test_portal_and_cultural_center_disambiguation(self):
+        cats=[{"code":"FIN-09","label":"FinTech-компанії","query":"фінтех"},
+              {"code":"MED-03","label":"Тематичні інформаційні портали","query":"інформаційний портал"},
+              {"code":"NGO-11","label":"Ресурсні центри для ГО","query":"ресурсний центр громадських організацій"},
+              {"code":"ART-07","label":"Культурні центри","query":"культурний центр"}]
+        self.assertEqual(classify_candidate("Мінфін","FinTech-компанії",{"evidence":("Фінансовий портал про економіку","url")},cats),("Тематичні інформаційні портали","corrected"))
+        self.assertEqual(classify_candidate("Шелтер","Ресурсні центри для ГО",{"evidence":("Культурно-громадський центр","url")},cats),("Культурні центри","corrected"))
+        self.assertEqual(classify_candidate("Невідома компанія","FinTech-компанії",{"evidence":("Контакти і послуги","url")},cats),("","category_unconfirmed"))
+    def test_neutral_description(self):
+        self.assertEqual(neutral_sentence("Ласкаво просимо! Найкращий магазин художніх матеріалів."),"")
+        self.assertEqual(neutral_sentence("Магазин художніх матеріалів &amp; товарів для творчості 🎨."),"Магазин художніх матеріалів & товарів для творчості.")
+        cat={"code":"ART-01","label":"Художні магазини","query":"художній магазин"}
+        desc,url,method=description_for(cat["label"],{"description":("Контактна інформація.","url"),"evidence":("Художні матеріали","source")},cat)
+        self.assertEqual(desc,"Магазин художніх матеріалів і товарів для творчості.")
+        self.assertEqual(url,"source")
+    def test_evidence_from_about(self):
+        soup=BeautifulSoup('<title>Мистецький центр</title><main><p>Культурний центр проводить освітні та мистецькі заходи для молоді.</p></main>',"html.parser")
+        evidence,desc=site_evidence(soup,about=True)
+        self.assertIn("Культурний центр",evidence)
+        self.assertTrue(desc.endswith("."))
