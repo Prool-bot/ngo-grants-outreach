@@ -4,6 +4,8 @@ No email sending, personal-contact extraction, or contact artifacts.
 import argparse
 import datetime as dt
 import ipaddress
+import html
+import unicodedata
 import json
 import os
 import re
@@ -189,18 +191,146 @@ def extract(soup,known="",contact_page=False):
             add(cities,c)
     return emails,phones,cities
 
-def site_description(soup):
-    for selector in ('meta[property="og:description"]','meta[name="description"]'):
-        node=soup.select_one(selector)
-        if not node:
-            continue
-        value=re.sub(r"\s+"," ",str(node.get("content",""))).strip()
-        if not re.search(r"[а-яіїєґ]",value,re.I) or re.search(r"cookie|файли cookie|купити|знижк|доставк|підписуйт|увійти",value,re.I):
-            continue
-        first=re.split(r"(?<=[.!?])\s+",value,maxsplit=1)[0].strip()
-        if 25<=len(first)<=210:
-            return first.rstrip(".!?")+"."
+ABOUT = re.compile(r"про нас|про компанію|про організацію|про установу|about(?:[-_/ ]us)?|whoweare|хто ми|історія|наша діяльність",re.I)
+PROMO = re.compile(r"ласкаво просимо|вітаємо|найкращ|найбільш|провідн|лідер|унікальн|знижк|купити|замовляй|доставк|підписуйт|зв[’'ʼ]?яжіться|контактна інформація|офіційний сайт|всі права|cookie|акційн|будемо раді|ваш надійний",re.I)
+ANIMAL = re.compile(r"парк\s+(?:диких\s+)?(?:хижак|тварин)|реабілітаці\w*\s+(?:диких\s+)?тварин|зоо(?:парк|центр)|wildlife\s+(?:park|rehabilitation)|animal\s+rehabilitation",re.I)
+HUMAN_REHAB = re.compile(r"пацієнт|людей|людин|осіб|медичн|фізичн\w+\s+терап|ерготерап|фізіотерап|реабілітаці\w*\s+ветеран|patient|physiotherapy",re.I)
+CATEGORY_RULES = {
+    "ART-01": r"(?:художн\w*\s+(?:матеріал|товар)|товар\w*\s+для\s+творчост|art supplies)",
+    "ART-02": r"фототехнік|фотоапарат|фотоаксесуар|camera shop",
+    "ART-05": r"галере\w*\s+мистецтв|мистецьк\w*\s+галере|art gallery",
+    "ART-06": r"\bмузе[йюїє]|museum",
+    "ART-07": r"культурно[- ]громадськ\w*\s+центр|культурн\w*\s+центр|cultural cent",
+    "ART-10": r"видавництв|книговидан|publishing house|book publisher",
+    "ART-11": r"книгарн|книжков\w*\s+(?:інтернет[- ])?магазин|bookstore",
+    "ART-13": r"\bтеатр|theatre|theater",
+    "ART-20": r"ювелірн\w*\s+(?:вироб|прикрас|бренд|магазин)|jewelry",
+    "EDU-01": r"\bуніверситет|university",
+    "EDU-02": r"\bколедж|college",
+    "EDU-07": r"науково[- ]дослідн|дослідницьк\w*\s+інститут|research institute|ндіпроект",
+    "EDU-08": r"академі\w*\s+наук|науков\w*\s+товариств|academy of science",
+    "FIN-01": r"\bбанк(?:у|ом|ів|и)?\b|bank",
+    "FIN-02": r"міжнародн\w*\s+банк|international bank",
+    "FIN-07": r"страхов\w*\s+компані|insurance company",
+    "FIN-09": r"фінтех|fintech|фінансов\w*\s+технолог",
+    "MED-03": r"інформаційн\w*\s+(?:портал|ресурс)|фінансов\w*\s+портал|портал\s+про|news portal|медіа\s+про",
+    "NGO-11": r"ресурсн\w*\s+центр.{0,45}(?:громадськ|ngo|го\b)|центр\s+підтримки\s+громадськ",
+    "DEV-07": r"реабілітаційн\w*\s+центр|rehabilitation cent",
+}
+NEUTRAL_DESCRIPTIONS = {
+    "ART-01":"Магазин художніх матеріалів і товарів для творчості.",
+    "ART-02":"Магазин фототехніки та супутніх товарів для фотографії.",
+    "ART-05":"Мистецька галерея, що експонує твори мистецтва.",
+    "ART-06":"Музей, що представляє музейні колекції та експозиції.",
+    "ART-07":"Культурний центр, що працює у сфері культури.",
+    "ART-10":"Видавництво, що працює у сфері книговидання.",
+    "ART-11":"Книгарня, що спеціалізується на продажу книжок.",
+    "ART-13":"Театр, що працює у сфері сценічного мистецтва.",
+    "EDU-01":"Заклад вищої освіти університетського типу.",
+    "EDU-02":"Коледж, що надає освітні послуги.",
+    "EDU-07":"Установа, що здійснює науково-дослідну діяльність.",
+    "EDU-08":"Наукова організація академічного спрямування.",
+    "FIN-01":"Банк, що надає банківські послуги.",
+    "FIN-02":"Банк міжнародного спрямування.",
+    "FIN-07":"Компанія, що надає страхові послуги.",
+    "FIN-09":"Компанія, що працює у сфері фінансових технологій.",
+    "MED-03":"Тематичний інформаційний ресурс.",
+    "DEV-07":"Центр, що надає послуги реабілітації людям.",
+}
+
+def clean_text(value):
+    value=html.unescape(html.unescape(str(value or "")))
+    value=BeautifulSoup(value,"html.parser").get_text(" ",strip=True) if re.search(r"<[a-zA-Z/]",value) else value
+    value="".join(ch if (unicodedata.category(ch)[0] in "LNPMZ" or ch in "+&") else " " for ch in value)
+    return re.sub(r"\s+"," ",value).strip()
+
+def neutral_sentence(value):
+    value=clean_text(value)
+    # Protect common abbreviations from accidental truncation.
+    value=re.sub(r"\b(?:м|ім|вул|тов|дп|ат)\.\s*",lambda m:m.group(0).replace(".",""),value,flags=re.I)
+    for line in re.split(r"(?<=[.!?])\s+",value):
+        line=line.strip(" .!?;:–—")
+        if (35<=len(line)<=200 and re.search(r"[а-яіїєґ]",line,re.I)
+                and not PROMO.search(line) and not EMAIL.search(line)
+                and not re.search(r"\d{6,}|https?://|\b\d{1,3}\s*%|[!?]",line)
+                and not re.search(r"\b(?:в|у|з|та|і|й|на|для|м|ім)$",line,re.I)):
+            return line+"."
     return ""
+
+def site_evidence(soup,about=False):
+    pieces=[]
+    candidates=[]
+    for obj in structured(soup):
+        for k in ("name","description"):
+            value=obj.get(k)
+            if isinstance(value,str):
+                pieces.append(clean_text(value)[:400])
+                if k=="description":
+                    candidates.append(value)
+    for selector in ('meta[property="og:description"]','meta[name="description"]','meta[property="og:title"]','title','h1'):
+        node=soup.select_one(selector)
+        if node:
+            value=node.get("content","") or node.get_text(" ",strip=True)
+            pieces.append(clean_text(value)[:400])
+            if "description" in selector:
+                candidates.append(value)
+    if about:
+        for node in soup.select("main p, article p, [role='main'] p")[:12]:
+            value=node.get_text(" ",strip=True)
+            if 35<=len(value)<=600:
+                pieces.append(clean_text(value)[:400])
+                candidates.append(value)
+    return " | ".join(pieces)[:3500],next((line for v in candidates if (line:=neutral_sentence(v))),"")
+
+def site_description(soup):
+    return site_evidence(soup)[1]
+
+def category_match(code, text, query):
+    if code=="DEV-07":
+        return bool(re.search(CATEGORY_RULES[code],text,re.I) and HUMAN_REHAB.search(text) and not ANIMAL.search(text))
+    if code in CATEGORY_RULES:
+        return bool(re.search(CATEGORY_RULES[code],text,re.I))
+    # Every meaningful query token must match; never a single generic word from a multiword category.
+    words=re.findall(r"[а-яіїєґa-z0-9]+",query.casefold())
+    stems=[w[:max(3,len(w)-3)] for w in words if len(w)>=3]
+    return bool(stems) and all(re.search(r"\b"+re.escape(w),text.casefold()) for w in stems)
+
+def classify_candidate(name, profile, result, categories):
+    by_label={c["label"]:c for c in categories}
+    cat=by_label.get(profile)
+    if not cat:
+        return "", "unknown_category"
+    evidence=result.get("evidence",("",""))[0]
+    if not evidence:
+        return "", "no_site_profile_evidence"
+    combined=name+" "+evidence
+    if cat["code"]=="DEV-07" and ANIMAL.search(combined):
+        return "", "animal_not_human_rehabilitation"
+    # Correct high-confidence disambiguations only; otherwise require the proposed category to be supported.
+    overrides=[]
+    if cat["code"]=="NGO-11" and re.search(CATEGORY_RULES["ART-07"],combined,re.I) and not re.search(CATEGORY_RULES["NGO-11"],evidence,re.I):
+        overrides.append("ART-07")
+    if cat["code"]=="FIN-09" and re.search(r"фінансов\w*\s+портал|портал\s+про\s+фінанс",evidence,re.I):
+        overrides.append("MED-03")
+    if cat["code"]=="EDU-01" and re.search(r"\bколедж\b",name,re.I):
+        overrides.append("EDU-02")
+    for code in overrides:
+        match=next((c for c in categories if c["code"]==code),None)
+        if match and category_match(code,evidence,match["query"]):
+            return match["label"],"corrected"
+    if category_match(cat["code"],evidence,cat["query"]):
+        return profile,"confirmed"
+    # Name is corroborating evidence, not a substitute for a website profile.
+    return "", "category_unconfirmed"
+
+def description_for(profile, result, category):
+    code=category["code"]
+    text,url=result.get("description",("",""))
+    # Require the description itself to substantiate the assigned profile.
+    if text and category_match(code,text,category["query"]) and not (code=="DEV-07" and ANIMAL.search(text)):
+        return text,url,"Нейтральний опис з офіційного сайту"
+    ev_url=result.get("evidence",("",""))[1]
+    return NEUTRAL_DESCRIPTIONS.get(code,f"Основний підтверджений напрям діяльності — {profile.lower()}."),ev_url,"Стислий опис за підтвердженим профілем; деталі не додавалися"
 
 def find_contact(session,site,known=""):
     if not site or not safe_url(site):
@@ -224,8 +354,14 @@ def find_contact(session,site,known=""):
         fetched=True
         soup=BeautifulSoup(response.content,"html.parser")
         e,p,c=extract(soup,known,contact_page=bool(CONTACT.search(urlsplit(response.url).path)))
-        description=site_description(soup)
-        if description and "description" not in out:
+        path=urlsplit(response.url).path
+        is_about=bool(ABOUT.search(path)) and not CONTACT.search(path)
+        is_contact=bool(CONTACT.search(path))
+        evidence,description=site_evidence(soup,about=is_about)
+        if evidence and (not is_contact or "evidence" not in out):
+            previous,prev_url=out.get("evidence",("",""))
+            out["evidence"]=((evidence+" | "+previous)[:7000],response.url)
+        if description and not is_contact and ("description" not in out or is_about):
             out["description"]=(description,response.url)
         if e and "email" not in out:
             out["email"]=(known if known and any(email_key(x)==email_key(known) for x in e) else e[0],response.url)
@@ -233,13 +369,18 @@ def find_contact(session,site,known=""):
             out["phone"]=("; ".join(p[:3]),response.url)
         if c and "city" not in out:
             out["city"]=("; ".join(c[:3]),response.url)
-        if all(k in out for k in ("email","phone")) and (("city" in out and "description" in out) or len(visited)>=3):
+        if all(k in out for k in ("email","phone","evidence","description")) and len(visited)>=3 and not any(ABOUT.search(urlsplit(u).path) and not CONTACT.search(urlsplit(u).path) for u in pages):
             break
         for a in soup.select("a[href]"):
-            if CONTACT.search(a.get_text(" ",strip=True)) or CONTACT.search(a["href"]):
+            if CONTACT.search(a.get_text(" ",strip=True)) or CONTACT.search(a["href"]) or ABOUT.search(a.get_text(" ",strip=True)) or ABOUT.search(a["href"]):
                 u=urljoin(response.url,a["href"]).split("#")[0]
                 if host(u)==host(site) and u not in visited and u not in pages and urlsplit(u).scheme in ("http","https"):
-                    pages.insert(0,u) if CONTACT.search(urlsplit(u).path) else pages.append(u)
+                    if ABOUT.search(urlsplit(u).path) and not CONTACT.search(urlsplit(u).path):
+                        pages.insert(0,u)
+                    elif CONTACT.search(urlsplit(u).path):
+                        pages.insert(0,u)
+                    else:
+                        pages.append(u)
         time.sleep(.3)
     return out,fetched
 
@@ -377,7 +518,9 @@ def main():
     if existing[0]!=HEADER:
         raise ValueError("Unexpected contact table headers")
     from catalog_research.run import load_categories
-    labels={x["label"]:x["code"] for x in load_categories()}
+    categories=load_categories()
+    labels={x["label"]:x["code"] for x in categories}
+    category_by_label={x["label"]:x for x in categories}
     crm=read(api,SID,"Контрагенти","A1:E1000")
     if crm[0][:5]!=["ID","Організація","Сектор","Email","Раніше зазначене джерело"]:
         raise ValueError("Unexpected historical source headers")
@@ -469,19 +612,21 @@ def main():
                 counts["missing_org_phone"]+=1
             if not eligible_new(result):
                 continue
-            if profile not in labels:
-                counts["unclassified"]+=1
+            profile,classification=classify_candidate(name,profile,result,categories)
+            if not profile:
+                counts[classification]+=1
                 continue
+            counts["classification_"+classification]+=1
             if key(name) in known_names or email_key(result["email"][0]) in known_emails or host(site) in known_hosts:
                 counts["duplicate"]+=1
                 continue
             known_names.add(key(name));known_emails.add(email_key(result["email"][0]));known_hosts.add(host(site))
-            description,desc_url=result.get("description",(f"Організація напряму «{profile}»; спеціалізація потребує уточнення.",""))
-            desc_note=("Опис з офіційного сайту: "+desc_url+" | "+stamp) if desc_url else "Попередній опис за класифікатором; уточнити профіль."
+            description,desc_url,desc_method=description_for(profile,result,category_by_label[profile])
+            desc_note=desc_method+": "+desc_url+" | "+stamp
             city,city_url=result.get("city",("",""))
             new_with_city+=bool(city)
             accepted_categories[labels[profile]]+=1
-            appended.append({"values":[cell(name,"Офіційний сайт: "+site),cell(profile)]+[cell(result[k][0],"Офіційне джерело: "+result[k][1]+" | "+stamp) for k in ("email","phone")]+[cell(city,("Офіційне джерело: "+city_url+" | "+stamp) if city else "Місто не підтверджено; необов'язкове поле."),cell(labels[profile],"Попередня класифікація"),cell(profile),cell(description,desc_note),cell("Не телефонували","Ручний статус; згода не встановлена."),cell(site,"Офіційний сайт, використаний для пошуку | "+stamp)]})
+            appended.append({"values":[cell(name,"Офіційний сайт: "+site),cell(profile)]+[cell(result[k][0],"Офіційне джерело: "+result[k][1]+" | "+stamp) for k in ("email","phone")]+[cell(city,("Офіційне джерело: "+city_url+" | "+stamp) if city else "Місто не підтверджено; необов'язкове поле."),cell(labels[profile],"Категорія за профілем офіційного сайту: "+result["evidence"][1]+" | "+stamp),cell(profile),cell(description,desc_note),cell("Не телефонували","Ручний статус; згода не встановлена."),cell(site,"Офіційний сайт, використаний для пошуку | "+stamp)]})
     if appended:
         start=len(existing)
         end=start+len(appended)
